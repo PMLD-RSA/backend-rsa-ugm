@@ -1,0 +1,45 @@
+{
+  "name": "backend-rsa-ugm",
+  "version": "1.0.0",
+  "description": "WP-3 Backend, Database & Monitoring/Warning Engine for Integrated Hospital Water Tank Monitoring Research Project",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "dev:api": "tsx watch src/api/server.ts",
+    "dev:worker": "tsx watch src/worker/worker.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:api": "node dist/api/server.js",
+    "start:worker": "node dist/worker/worker.js",
+    "db:generate": "tsx ./node_modules/drizzle-kit/bin.cjs generate",
+    "db:push": "tsx ./node_modules/drizzle-kit/bin.cjs push",
+    "db:studio": "tsx ./node_modules/drizzle-kit/bin.cjs studio",
+    "simulate": "tsx src/scripts/simulate-sensor.ts",
+    "init-db": "tsx src/scripts/init-db.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@fastify/jwt": "^9.0.4",
+    "@fastify/sensible": "^6.0.3",
+    "@fastify/websocket": "^11.0.2",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.39.3",
+    "fastify": "^5.2.1",
+    "ioredis": "^5.5.0",
+    "mqtt": "^5.10.3",
+    "pino": "^9.6.0",
+    "pino-pretty": "^13.0.0",
+    "postgres": "^3.4.5",
+    "ws": "^8.18.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/ws": "^8.5.14",
+    "drizzle-kit": "^0.30.4",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
+

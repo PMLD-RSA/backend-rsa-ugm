@@ -1,5 +1,5 @@
 import mqtt, { MqttClient } from "mqtt";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { env } from "../config/env.js";
 import {
   mqttLevelPayloadSchema,
@@ -11,6 +11,10 @@ import { WarningEngine } from "../services/warning-engine.js";
 import { wsBroadcaster } from "../services/ws-broadcaster.js";
 import { db } from "../db/index.js";
 import { sensorNodes, gateways } from "../db/schema/index.js";
+
+function isUUID(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
 
 export class MqttSubscriberService {
   private client: MqttClient | null = null;
@@ -29,18 +33,22 @@ export class MqttSubscriberService {
     this.client.on("connect", () => {
       console.log("[MQTT] Terhubung ke broker");
 
-      this.client?.subscribe(
-        [env.MQTT_TOPIC_LEVEL, env.MQTT_TOPIC_STATUS, env.MQTT_TOPIC_HEARTBEAT],
-        (err) => {
-          if (err) {
-            console.error("[MQTT] Gagal subscribe ke topic:", err);
-          } else {
-            console.log(
-              `[MQTT] Subscribed ke topic: ${env.MQTT_TOPIC_LEVEL}, ${env.MQTT_TOPIC_STATUS}, ${env.MQTT_TOPIC_HEARTBEAT}`
-            );
-          }
+      const topics = [
+        env.MQTT_TOPIC_LEVEL,
+        env.MQTT_TOPIC_STATUS,
+        env.MQTT_TOPIC_HEARTBEAT,
+        "hospital/status",
+        "hospital/level",
+        "hospital/heartbeat",
+      ];
+
+      this.client?.subscribe(topics, (err) => {
+        if (err) {
+          console.error("[MQTT] Gagal subscribe ke topic:", err);
+        } else {
+          console.log(`[MQTT] Subscribed ke topic: ${topics.join(", ")}`);
         }
-      );
+      });
     });
 
     this.client.on("message", (topic, message) => {
@@ -105,15 +113,31 @@ export class MqttSubscriberService {
     }
 
     const payload = parseResult.data;
+    const isIdUuid = isUUID(payload.sensor_node_id);
 
-    // Update status node sensor di database
-    await db
+    // Update status node sensor di database berdasarkan UUID atau deviceCode
+    const updatedNodes = await db
       .update(sensorNodes)
       .set({
         status: payload.status,
         lastSeen: new Date(payload.timestamp),
       })
-      .where(eq(sensorNodes.deviceCode, payload.sensor_node_id));
+      .where(
+        isIdUuid
+          ? or(eq(sensorNodes.id, payload.sensor_node_id), eq(sensorNodes.deviceCode, payload.sensor_node_id))
+          : eq(sensorNodes.deviceCode, payload.sensor_node_id)
+      )
+      .returning();
+
+    if (updatedNodes.length > 0) {
+      console.log(
+        `[MQTT] Status sensor node '${updatedNodes[0].deviceCode}' berhasil di-update: ${payload.status}`
+      );
+    } else {
+      console.warn(
+        `[MQTT] Node sensor tidak ditemukan di database untuk sensor_node_id: '${payload.sensor_node_id}'`
+      );
+    }
 
     wsBroadcaster.broadcast("NODE_STATUS", payload);
   }

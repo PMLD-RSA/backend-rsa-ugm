@@ -3,6 +3,10 @@ import { waterLevelReadings, NewWaterLevelReading } from "../db/schema/index.js"
 import { RedisStreamService, redis } from "./redis-stream.js";
 import { env } from "../config/env.js";
 
+function isUUID(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
 export class BatchWriterService {
   private static timer: NodeJS.Timeout | null = null;
   private static isProcessing = false;
@@ -38,24 +42,38 @@ export class BatchWriterService {
         return;
       }
 
-      const recordsToInsert: NewWaterLevelReading[] = batch.map(({ payload }) => ({
-        tankId: payload.tank_id,
-        sensorNodeId: payload.sensor_node_id,
-        levelPercent: payload.level_percent.toString(),
-        volumeLiters: payload.volume_liters.toString(),
-        rawValue: payload.raw_value ? payload.raw_value.toString() : null,
-        rssi: payload.rssi ?? null,
-        recordedAt: payload.timestamp ? new Date(payload.timestamp) : new Date(),
-      }));
+      const allBatchIds = batch.map((item) => item.id);
+      const recordsToInsert: NewWaterLevelReading[] = [];
 
-      // Simpan ke database
-      await db.insert(waterLevelReadings).values(recordsToInsert);
+      for (const { payload } of batch) {
+        let tankId: string | null = isUUID(payload.tank_id) ? payload.tank_id : null;
+        let nodeId: string | null = isUUID(payload.sensor_node_id) ? payload.sensor_node_id : null;
 
-      // Hapus dari buffer Redis
-      const ids = batch.map((item) => item.id);
-      await RedisStreamService.deleteProcessed(ids);
+        // Validasi UUID tank
+        if (!tankId) {
+          console.warn(`[BatchWriter] Mengabaikan payload: tank_id bukan UUID valid (${payload.tank_id})`);
+          continue;
+        }
 
-      console.log(`[BatchWriter] Berhasil menyimpan ${recordsToInsert.length} data ke database`);
+        recordsToInsert.push({
+          tankId,
+          sensorNodeId: nodeId,
+          levelPercent: payload.level_percent.toString(),
+          volumeLiters: payload.volume_liters.toString(),
+          rawValue: payload.raw_value ? payload.raw_value.toString() : null,
+          rssi: payload.rssi ?? null,
+          recordedAt: payload.timestamp ? new Date(payload.timestamp) : new Date(),
+        });
+      }
+
+      // Simpan data yang valid ke database
+      if (recordsToInsert.length > 0) {
+        await db.insert(waterLevelReadings).values(recordsToInsert);
+        console.log(`[BatchWriter] Berhasil menyimpan ${recordsToInsert.length} data ke database`);
+      }
+
+      // Hapus seluruh ID yang sudah diproses dari buffer Redis agar antrian tidak macet
+      await RedisStreamService.deleteProcessed(allBatchIds);
     } catch (error) {
       console.error("[BatchWriter] Gagal batch insert:", error);
     } finally {

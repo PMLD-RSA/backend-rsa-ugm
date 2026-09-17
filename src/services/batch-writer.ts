@@ -66,16 +66,47 @@ export class BatchWriterService {
         });
       }
 
-      // Simpan data yang valid ke database
+      // Simpan data ke database
       if (recordsToInsert.length > 0) {
-        await db.insert(waterLevelReadings).values(recordsToInsert);
-        console.log(`[BatchWriter] Berhasil menyimpan ${recordsToInsert.length} data ke database`);
+        try {
+          // Coba insert seluruh batch sekaligus
+          await db.insert(waterLevelReadings).values(recordsToInsert);
+          console.log(`[BatchWriter] Berhasil menyimpan ${recordsToInsert.length} data ke database`);
+        } catch (batchErr: unknown) {
+          // Jika batch gagal (misal salah satu tank_id tidak ada di DB / foreign key constraint violation),
+          // fallback insert per-item agar data yang valid tetap tersimpan dan tidak terblokir
+          const errDetail = batchErr instanceof Error ? batchErr.message : String(batchErr);
+          console.warn(`[BatchWriter] Batch insert gagal (${errDetail}), memproses per-item...`);
+
+          let savedCount = 0;
+          for (const rec of recordsToInsert) {
+            try {
+              await db.insert(waterLevelReadings).values(rec);
+              savedCount++;
+            } catch (singleErr: unknown) {
+              const singleDetail =
+                (singleErr as { detail?: string })?.detail ||
+                (singleErr instanceof Error ? singleErr.message : String(singleErr));
+              console.warn(
+                `[BatchWriter] Mengabaikan data tidak valid (tank_id: ${rec.tankId}): ${singleDetail}`
+              );
+              // Catat data rusak ke antrean Dead Letter di Redis
+              await RedisStreamService.pushToDeadLetter(rec, singleDetail);
+            }
+          }
+
+          if (savedCount > 0) {
+            console.log(
+              `[BatchWriter] Berhasil menyimpan ${savedCount}/${recordsToInsert.length} data valid ke database`
+            );
+          }
+        }
       }
 
-      // Hapus seluruh ID yang sudah diproses dari buffer Redis agar antrian tidak macet
+      // Hapus seluruh ID yang sudah diproses dari buffer Redis agar antrean tidak tersumbat
       await RedisStreamService.deleteProcessed(allBatchIds);
     } catch (error) {
-      console.error("[BatchWriter] Gagal batch insert:", error);
+      console.error("[BatchWriter] Gagal memproses batch:", error);
     } finally {
       this.isProcessing = false;
     }

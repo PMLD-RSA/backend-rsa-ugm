@@ -39,13 +39,15 @@ export class RedisStreamService {
     count = 50
   ): Promise<Array<{ id: string; payload: MqttLevelPayload }>> {
     try {
-      const result = await redis.xrevrange(this.streamKey, "+", "-", "COUNT", count);
+      // Baca antrean secara FIFO (terlama ke terbaru)
+      const result = await redis.xrange(this.streamKey, "-", "+", "COUNT", count);
 
       if (!result || result.length === 0) {
         return [];
       }
 
       const items: Array<{ id: string; payload: MqttLevelPayload }> = [];
+      const corruptIds: string[] = [];
 
       for (const [id, fields] of result) {
         const payloadIndex = fields.indexOf("payload");
@@ -54,9 +56,16 @@ export class RedisStreamService {
             const data = JSON.parse(fields[payloadIndex + 1]) as MqttLevelPayload;
             items.push({ id, payload: data });
           } catch {
-            // abaikan JSON tidak valid
+            corruptIds.push(id);
           }
+        } else {
+          corruptIds.push(id);
         }
+      }
+
+      // Hapus data korup langsung dari Redis agar tidak terbaca ulang
+      if (corruptIds.length > 0) {
+        await redis.xdel(this.streamKey, ...corruptIds);
       }
 
       return items;
@@ -72,6 +81,23 @@ export class RedisStreamService {
       await redis.xdel(this.streamKey, ...ids);
     } catch (error) {
       console.error("[RedisStreamService] Gagal menghapus data:", error);
+    }
+  }
+
+  public static async pushToDeadLetter(payload: unknown, reason: string): Promise<void> {
+    try {
+      await redis.xadd(
+        `${this.streamKey}:dead_letter`,
+        "*",
+        "payload",
+        JSON.stringify(payload),
+        "reason",
+        reason,
+        "failedAt",
+        new Date().toISOString()
+      );
+    } catch {
+      // Abaikan jika pencatatan DLQ gagal
     }
   }
 }

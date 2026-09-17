@@ -25,7 +25,12 @@ export class WarningEngine {
         .limit(1);
 
       const tank = tankResult[0];
-      const minThreshold = tank ? parseFloat(tank.minThresholdPercent) : 30.0;
+      if (!tank) {
+        // Tangki tidak terdaftar di database, abaikan agar tidak menimbulkan foreign key violation pada alerts
+        return;
+      }
+
+      const minThreshold = parseFloat(tank.minThresholdPercent);
 
       let alertLevel: "CRITICAL" | "WARNING" | null = null;
       let alertMessage = "";

@@ -1,0 +1,833 @@
+openapi: 3.0.3
+info:
+  title: Hospital Water Tank Monitoring API
+  description: WP-3 Backend REST API & Realtime Monitoring Specification for Integrated Hospital Water Tank Monitoring Research Project (RSA UGM).
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000
+    description: Local Development Server
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Returns health status of the API, database connection, Redis, and active WebSocket client count.
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: System is degraded
+
+  /api/tanks:
+    get:
+      summary: List all water tanks
+      description: Returns all monitored water tanks with their latest reading, active alert, and attached sensor nodes.
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TankDetail'
+    post:
+      summary: Create new tank
+      description: Registers a new water tank into the monitoring system.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTankInput'
+      responses:
+        '201':
+          description: Tank created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Tank'
+        '400':
+          description: Validation error
+
+  /api/tanks/{id}:
+    get:
+      summary: Get tank details
+      description: Returns single tank details along with the 50 most recent readings and 10 recent alerts.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/TankWithRecentHistory'
+        '404':
+          description: Tank not found
+    patch:
+      summary: Update tank
+      description: Update tank metadata or threshold limits.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTankInput'
+      responses:
+        '200':
+          description: Tank updated successfully
+        '404':
+          description: Tank not found
+
+  /api/tanks/{id}/readings:
+    get:
+      summary: Get historical time-series readings
+      description: Fetch time-series water level readings for charting and trend analysis.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: hours
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 24
+          description: Number of historical hours to query
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 1000
+          description: Maximum number of records to return
+      responses:
+        '200':
+          description: List of time-series readings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  tankId:
+                    type: string
+                    format: uuid
+                  hours:
+                    type: number
+                    example: 24
+                  count:
+                    type: number
+                    example: 288
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Reading'
+
+  /api/alerts:
+    get:
+      summary: List alerts
+      description: Retrieve list of threshold alerts, optionally filtered by status.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, resolved]
+      responses:
+        '200':
+          description: List of alerts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  count:
+                    type: number
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Alert'
+
+  /api/alerts/{id}/resolve:
+    patch:
+      summary: Manually resolve alert
+      description: Mark an active alert as resolved. Broadcasts ALERT_RESOLVED event over WebSocket.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Alert marked as resolved
+        '404':
+          description: Alert not found
+
+  /api/gateways:
+    get:
+      summary: List all LoRa gateways
+      description: Returns list of Raspberry Pi gateways with their connected STM32 sensor nodes.
+      responses:
+        '200':
+          description: List of gateways
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Gateway'
+
+  /api/nodes:
+    get:
+      summary: List all sensor nodes
+      description: Returns all STM32 sensor nodes with attached tank and gateway information.
+      responses:
+        '200':
+          description: List of sensor nodes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  count:
+                    type: number
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SensorNode'
+
+  /api/auth/login:
+    post:
+      summary: User Login
+      description: Authenticate user credentials and return a JWT Bearer token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginInput'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid username or password
+
+  /api/auth/me:
+    get:
+      summary: Get current authenticated user
+      description: Returns profile of the user currently logged in.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profile data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+
+  /api/users:
+    get:
+      summary: List all users (Admin only)
+      description: Retrieve list of system operators and admins.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  count:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+    post:
+      summary: Create user (Admin only)
+      description: Register a new operator or admin account.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserInput'
+      responses:
+        '201':
+          description: User created successfully
+        '400':
+          description: Validation error
+
+  /api/users/{id}:
+    patch:
+      summary: Update user role / active status
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserInput'
+      responses:
+        '200':
+          description: User updated successfully
+
+  /api/audit-logs:
+    get:
+      summary: List system audit logs (Admin only)
+      description: Retrieve chronological log of user activities and configuration changes.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: entity
+          in: query
+          schema:
+            type: string
+            example: tanks
+      responses:
+        '200':
+          description: List of audit logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  page:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditLog'
+
+  /api/reports/readings/export:
+    get:
+      summary: Export historical readings
+      description: Download water level readings as CSV/XLSX.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: tankId
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, xlsx, pdf]
+            default: csv
+      responses:
+        '200':
+          description: File download binary stream
+
+  /api/reports/alerts/export:
+    get:
+      summary: Export alerts history
+      description: Download alerts history as CSV/XLSX.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: level
+          in: query
+          schema:
+            type: string
+            enum: [WARNING, CRITICAL]
+        - name: startDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [csv, xlsx, pdf]
+            default: csv
+      responses:
+        '200':
+          description: File download binary stream
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: healthy
+        services:
+          type: object
+          properties:
+            database:
+              type: string
+              example: up
+            redis:
+              type: string
+              example: up
+        websocketClients:
+          type: integer
+          example: 2
+        timestamp:
+          type: string
+          format: date-time
+
+    Tank:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Tangki Atap Gedung Utama"
+        location:
+          type: string
+          nullable: true
+          example: "Atap Gedung A (Utama), Lantai 5"
+        capacityLiters:
+          type: string
+          example: "10000.00"
+        minThresholdPercent:
+          type: string
+          example: "30.00"
+        maxThresholdPercent:
+          type: string
+          example: "90.00"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreateTankInput:
+      type: object
+      required:
+        - name
+        - capacityLiters
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: "Tangki Gedung Laboratorium"
+        location:
+          type: string
+          maxLength: 150
+          example: "Gedung Lab Terpadu Lantai 4"
+        capacityLiters:
+          type: number
+          example: 6000
+        minThresholdPercent:
+          type: number
+          default: 30
+          example: 30
+        maxThresholdPercent:
+          type: number
+          default: 90
+          example: 90
+
+    UpdateTankInput:
+      type: object
+      properties:
+        name:
+          type: string
+        location:
+          type: string
+        capacityLiters:
+          type: number
+        minThresholdPercent:
+          type: number
+        maxThresholdPercent:
+          type: number
+
+    Reading:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 14205
+        tankId:
+          type: string
+          format: uuid
+        sensorNodeId:
+          type: string
+          format: uuid
+          nullable: true
+        levelPercent:
+          type: string
+          example: "72.40"
+        volumeLiters:
+          type: string
+          example: "7240.00"
+        rawValue:
+          type: string
+          nullable: true
+          example: "812.00"
+        rssi:
+          type: integer
+          nullable: true
+          example: -78
+        recordedAt:
+          type: string
+          format: date-time
+
+    Alert:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 89
+        tankId:
+          type: string
+          format: uuid
+        tankName:
+          type: string
+          example: "Tangki Gedung IBS"
+        tankLocation:
+          type: string
+          nullable: true
+        level:
+          type: string
+          enum: [WARNING, CRITICAL]
+          example: "CRITICAL"
+        message:
+          type: string
+          example: "Level air tangki IBS CRITICAL: 24.5%"
+        status:
+          type: string
+          enum: [active, resolved]
+          example: "active"
+        createdAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    Gateway:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        deviceCode:
+          type: string
+          example: "GW-HUB-01"
+        status:
+          type: string
+          example: "online"
+        lastHeartbeat:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        nodesCount:
+          type: integer
+          example: 3
+        nodes:
+          type: array
+          items:
+            $ref: '#/components/schemas/SensorNode'
+
+    SensorNode:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tankId:
+          type: string
+          format: uuid
+        gatewayId:
+          type: string
+          format: uuid
+          nullable: true
+        deviceCode:
+          type: string
+          example: "STM32-GEDUNG-A"
+        sensorType:
+          type: string
+          example: "ultrasonic"
+        status:
+          type: string
+          example: "active"
+        lastRssi:
+          type: integer
+          nullable: true
+          example: -78
+        lastSeen:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    TankDetail:
+      allOf:
+        - $ref: '#/components/schemas/Tank'
+        - type: object
+          properties:
+            latestReading:
+              $ref: '#/components/schemas/Reading'
+              nullable: true
+            activeAlert:
+              $ref: '#/components/schemas/Alert'
+              nullable: true
+            nodes:
+              type: array
+              items:
+                $ref: '#/components/schemas/SensorNode'
+
+    TankWithRecentHistory:
+      allOf:
+        - $ref: '#/components/schemas/Tank'
+        - type: object
+          properties:
+            recentReadings:
+              type: array
+              items:
+                $ref: '#/components/schemas/Reading'
+            recentAlerts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Alert'
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          example: "admin"
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+          example: "admin"
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+
+    LoginInput:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: "admin"
+        password:
+          type: string
+          example: "password123"
+
+    LoginResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Login berhasil"
+        data:
+          type: object
+          properties:
+            token:
+              type: string
+              example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+            user:
+              $ref: '#/components/schemas/User'
+
+    CreateUserInput:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          minLength: 3
+          example: "operator_shift1"
+        password:
+          type: string
+          minLength: 6
+          example: "passwordAman123"
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+          default: operator
+
+    UpdateUserInput:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [admin, operator, viewer]
+        isActive:
+          type: boolean
+
+    AuditLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 105
+        userId:
+          type: string
+          format: uuid
+          nullable: true
+        action:
+          type: string
+          example: "RESOLVE_ALERT"
+        entity:
+          type: string
+          example: "alerts"
+          nullable: true
+        entityId:
+          type: string
+          example: "89"
+          nullable: true
+        detail:
+          type: string
+          nullable: true
+          example: "Alert level CRITICAL diselesaikan secara manual oleh admin"
+        ipAddress:
+          type: string
+          nullable: true
+          example: "192.168.1.45"
+        createdAt:
+          type: string
+          format: date-time
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+

@@ -5,10 +5,14 @@ import { env } from "../config/env.js";
 import { jwtPlugin } from "./plugins/jwt.js";
 import { websocketPlugin } from "./plugins/websocket.js";
 import { healthRoutes } from "./routes/health.routes.js";
+import { authRoutes } from "./routes/auth.routes.js";
+import { usersRoutes } from "./routes/users.routes.js";
 import { tanksRoutes } from "./routes/tanks.routes.js";
 import { readingsRoutes } from "./routes/readings.routes.js";
 import { alertsRoutes } from "./routes/alerts.routes.js";
 import { gatewaysRoutes } from "./routes/gateways.routes.js";
+import { auditLogsRoutes } from "./routes/audit-logs.routes.js";
+import { reportsRoutes } from "./routes/reports.routes.js";
 
 export async function createServer() {
   const fastify = Fastify({
@@ -39,10 +43,14 @@ export async function createServer() {
 
   // Route API
   await fastify.register(healthRoutes);
+  await fastify.register(authRoutes);
+  await fastify.register(usersRoutes);
   await fastify.register(tanksRoutes);
   await fastify.register(readingsRoutes);
   await fastify.register(alertsRoutes);
   await fastify.register(gatewaysRoutes);
+  await fastify.register(auditLogsRoutes);
+  await fastify.register(reportsRoutes);
 
   return fastify;
 }
@@ -68,4 +76,3 @@ export async function startServer() {
 if (process.argv[1]?.endsWith("server.ts") || process.argv[1]?.endsWith("server.js")) {
   startServer();
 }
-

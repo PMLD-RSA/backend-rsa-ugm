@@ -1,12 +1,17 @@
 import { FastifyInstance } from "fastify";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gte } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { tanks, waterLevelReadings, alerts, sensorNodes } from "../../db/schema/index.js";
+import { tanks, waterLevelReadings, alerts, sensorNodes, auditLogs } from "../../db/schema/index.js";
 import { createTankSchema, updateTankSchema } from "../../schemas/api.schema.js";
 
 export async function tanksRoutes(fastify: FastifyInstance) {
+  const authGuard = { preHandler: [fastify.authenticate] };
+  const adminGuard = {
+    preHandler: [fastify.authenticate, fastify.authorize(["admin"])],
+  };
+
   // List semua tangki
-  fastify.get("/api/tanks", async (_request, reply) => {
+  fastify.get("/api/tanks", authGuard, async (_request, reply) => {
     const allTanks = await db.select().from(tanks);
 
     const results = await Promise.all(
@@ -42,8 +47,8 @@ export async function tanksRoutes(fastify: FastifyInstance) {
     return reply.send({ success: true, data: results });
   });
 
-  // Detail tangki
-  fastify.get<{ Params: { id: string } }>("/api/tanks/:id", async (request, reply) => {
+  // Detail tangki (50 pembacaan & 10 alert terakhir)
+  fastify.get<{ Params: { id: string } }>("/api/tanks/:id", authGuard, async (request, reply) => {
     const { id } = request.params;
 
     const [tank] = await db.select().from(tanks).where(eq(tanks.id, id)).limit(1);
@@ -76,8 +81,40 @@ export async function tanksRoutes(fastify: FastifyInstance) {
     });
   });
 
-  // Tambah tangki baru
-  fastify.post("/api/tanks", async (request, reply) => {
+  // Histori pembacaan spesifik satu tangki (untuk grafik time-series)
+  fastify.get<{
+    Params: { id: string };
+    Querystring: { hours?: string; limit?: string };
+  }>("/api/tanks/:id/readings", authGuard, async (request, reply) => {
+    const { id } = request.params;
+    const hours = parseInt(request.query.hours || "24", 10);
+    const limit = Math.min(1000, parseInt(request.query.limit || "500", 10));
+
+    const sinceDate = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+    const readings = await db
+      .select()
+      .from(waterLevelReadings)
+      .where(
+        and(
+          eq(waterLevelReadings.tankId, id),
+          gte(waterLevelReadings.recordedAt, sinceDate)
+        )
+      )
+      .orderBy(desc(waterLevelReadings.recordedAt))
+      .limit(limit);
+
+    return reply.send({
+      success: true,
+      tankId: id,
+      hours,
+      count: readings.length,
+      data: readings,
+    });
+  });
+
+  // Tambah tangki baru (Khusus Admin)
+  fastify.post("/api/tanks", adminGuard, async (request, reply) => {
     const parseResult = createTankSchema.safeParse(request.body);
 
     if (!parseResult.success) {
@@ -102,11 +139,22 @@ export async function tanksRoutes(fastify: FastifyInstance) {
       })
       .returning();
 
+    // Catat log audit
+    const adminUser = request.user as { id: string };
+    await db.insert(auditLogs).values({
+      userId: adminUser.id,
+      action: "CREATE_TANK",
+      entity: "tanks",
+      entityId: newTank.id,
+      detail: `Menambahkan master tangki '${newTank.name}'`,
+      ipAddress: request.ip,
+    });
+
     return reply.status(201).send({ success: true, data: newTank });
   });
 
-  // Update tangki
-  fastify.patch<{ Params: { id: string } }>("/api/tanks/:id", async (request, reply) => {
+  // Handler update tangki (Mendukung PATCH dan PUT)
+  const handleUpdateTank = async (request: any, reply: any) => {
     const { id } = request.params;
     const parseResult = updateTankSchema.safeParse(request.body);
 
@@ -141,7 +189,50 @@ export async function tanksRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ success: false, message: "Tank not found" });
     }
 
+    // Catat log audit
+    const adminUser = request.user as { id: string };
+    await db.insert(auditLogs).values({
+      userId: adminUser.id,
+      action: "UPDATE_TANK",
+      entity: "tanks",
+      entityId: updated.id,
+      detail: `Memperbarui data/threshold tangki '${updated.name}'`,
+      ipAddress: request.ip,
+    });
+
     return reply.send({ success: true, data: updated });
+  };
+
+  fastify.patch<{ Params: { id: string } }>("/api/tanks/:id", adminGuard, handleUpdateTank);
+  fastify.put<{ Params: { id: string } }>("/api/tanks/:id", adminGuard, handleUpdateTank);
+
+  // Hapus tangki (Khusus Admin)
+  fastify.delete<{ Params: { id: string } }>("/api/tanks/:id", adminGuard, async (request, reply) => {
+    const { id } = request.params;
+
+    const [deleted] = await db
+      .delete(tanks)
+      .where(eq(tanks.id, id))
+      .returning({ id: tanks.id, name: tanks.name });
+
+    if (!deleted) {
+      return reply.status(404).send({ success: false, message: "Tank not found" });
+    }
+
+    // Catat log audit
+    const adminUser = request.user as { id: string };
+    await db.insert(auditLogs).values({
+      userId: adminUser.id,
+      action: "DELETE_TANK",
+      entity: "tanks",
+      entityId: deleted.id,
+      detail: `Menghapus master tangki '${deleted.name}'`,
+      ipAddress: request.ip,
+    });
+
+    return reply.send({
+      success: true,
+      message: "Tank deleted successfully",
+    });
   });
 }
-

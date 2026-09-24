@@ -1,7 +1,7 @@
-# WP-3 — Backend, Database & Monitoring/Warning Engine
-### Integrated Hospital Water Tank Monitoring Research Project
+# Backend, Database & Monitoring/Warning Engine
+### Integrated Hospital Water Tank Monitoring Research Project (RSA UGM)
 
-> Dokumen ini adalah catatan kerja internal WP-3. Arsitektur perangkat keras yang menjadi acuan: setiap tangki menggunakan **STM32**, data dikirim via **LoRa** ke satu unit **Raspberry Pi** yang berperan sebagai gateway/hub pusat, baru diteruskan ke backend via MQTT.
+> Dokumen ini adalah spesifikasi kebutuhan sistem backend. Arsitektur perangkat keras yang menjadi acuan: setiap tangki menggunakan **STM32**, data dikirim via **LoRa** ke satu unit **Raspberry Pi** yang berperan sebagai gateway/hub pusat, baru diteruskan ke backend via MQTT.
 > 
 > **Status Scope:** Sistem ini berfokus murni sebagai **Monitoring & Early Warning System** (membaca level air, menyimpan histori time-series, dan mengeluarkan peringatan WARNING/CRITICAL jika terjadi anomali level air). Jalur otomasi aktuator/kontrol pompa telah ditiadakan.
 
@@ -11,14 +11,14 @@
 
 Sistem ini memantau level air pada beberapa tangki di rumah sakit (atap gedung utama, rawat inap, instalasi bedah, laboratorium, laundry, dst) secara terpusat, mendeteksi kondisi kritis, dan memberi peringatan (warning/critical) ke operator melalui dashboard web dan mobile.
 
-WP-3 bertanggung jawab pada **inti pemrosesan data**: menerima data dari gateway (via MQTT yang disediakan WP-2), melakukan buffering pesan (mencegah lonjakan data), menyimpannya secara terstruktur di database PostgreSQL/TimescaleDB, mencatat histori & audit, mendeteksi kondisi peringatan melalui Warning Engine, serta menyediakan REST API dan WebSocket untuk dikonsumsi oleh WP-4 (web Next.js & mobile React Native).
+Backend bertanggung jawab pada **inti pemrosesan data**: menerima data dari gateway (via MQTT), melakukan buffering pesan (mencegah lonjakan data), menyimpannya secara terstruktur di database PostgreSQL/TimescaleDB, mencatat histori & audit, mendeteksi kondisi peringatan melalui Warning Engine, serta menyediakan REST API dan WebSocket untuk dikonsumsi oleh dashboard frontend (web Next.js & mobile React Native).
 
 **Alur perangkat fisik:**
 
 ```
 [STM32 @ Tangki A] ─┐
 [STM32 @ Tangki B] ─┤  LoRa   ┌────────────────┐   MQTT   ┌────────────┐
-[STM32 @ Tangki C] ─┼────────▶│ Raspberry Pi   │─────────▶│  WP-3      │
+[STM32 @ Tangki C] ─┼────────▶│ Raspberry Pi   │─────────▶│            │
 [STM32 @ Tangki D] ─┤         │ (1 unit, hub)  │          │  Backend   │
 [STM32 @ Tangki N] ─┘         └────────────────┘          └────────────┘
                                                                  │
@@ -83,8 +83,8 @@ flowchart LR
     S2 -- LoRa --> GW
     S3 -- LoRa --> GW
 
-    GW -- "MQTT publish\n(sensor data)" --> BR["MQTT Broker (WP-2)"]
-    BR -- "MQTT subscribe" --> SUB["WP-3: MQTT Subscriber Service"]
+    GW -- "MQTT publish\n(sensor data)" --> BR["MQTT Broker"]
+    BR -- "MQTT subscribe" --> SUB["MQTT Subscriber Service"]
 
     SUB --> BUF["Redis Streams\n(buffer)"]
     BUF --> WR["Batch Writer"]
@@ -104,7 +104,7 @@ flowchart LR
 ```
 
 **Catatan Arsitektur:**
-- **Sistem Satu Arah (One-Way Data Flow):** Data mengalir dari sensor perangkat lapangan ke gateway, dipublish ke MQTT broker, diolah oleh backend WP-3, dan disajikan ke frontend WP-4.
+- **Sistem Satu Arah (One-Way Data Flow):** Data mengalir dari sensor perangkat lapangan ke gateway, dipublish ke MQTT broker, diolah oleh backend, dan disajikan ke frontend.
 - **Pemisahan Worker & API:** Ingest data sensor (MQTT + Redis Streams) dijalankan secara independen sehingga lonjakan pengiriman pesan dari banyak tangki tidak memperlambat respon Fastify REST API.
 - **Warning Engine Realtime:** Pengecekan threshold langsung dievaluasi saat pesan sensor masuk untuk memastikan alert peringatan segera disiarkan via WebSocket tanpa menunggu proses batch-insert database selesai.
 
@@ -112,7 +112,7 @@ flowchart LR
 
 ## 5. Komunikasi Data (MQTT)
 
-Komunikasi dengan WP-2 (Gateway & Broker) menggunakan protokol **MQTT**:
+Komunikasi dengan Gateway & Broker menggunakan protokol **MQTT**:
 
 | Topic | Arah | QoS | Keterangan |
 |---|---|---|---|
@@ -150,8 +150,8 @@ Komunikasi dengan WP-2 (Gateway & Broker) menggunakan protokol **MQTT**:
 
 1. STM32 di masing-masing tangki membaca sensor ketinggian air secara periodik.
 2. Data dikirimkan via modul radio **LoRa** ke satu unit Raspberry Pi (gateway pusat).
-3. Raspberry Pi mem-publish pesan data ke **MQTT broker** (dikelola WP-2) sesuai topic `hospital/{tank_id}/...`.
-4. **MQTT Subscriber Service** (WP-3) menerima pesan, memvalidasi integritas data dengan **Zod**, lalu:
+3. Raspberry Pi mem-publish pesan data ke **MQTT broker** sesuai topic `hospital/{tank_id}/...`.
+4. **MQTT Subscriber Service** menerima pesan, memvalidasi integritas data dengan **Zod**, lalu:
    - Memasukkan data ke buffer **Redis Streams**.
    - Meneruskan data ke **Warning Engine** untuk evaluasi threshold secara realtime.
 5. **Batch Writer** membaca data dari Redis Streams secara berkala/berkelompok (batch), lalu menginsert ke tabel time-series **PostgreSQL/TimescaleDB**.
@@ -266,7 +266,122 @@ erDiagram
 ---
 
 ## 8. Catatan Pengembangan & Integrasi
-- Kebijakan retensi data dan downsampling di TimescaleDB (misal: data mentah disimpan 30 hari, data agregasi per jam disimpan 1 tahun).
-- Koordinasi spesifikasi skema response REST API dan event payload WebSocket dengan tim WP-4 (Frontend).
-- Mekanisme autentikasi JWT token antara Fastify backend dan client dashboard (WP-4).
+- Kebijakan retensi data dan downsampling di TimescaleDB (data mentah disimpan 30 hari, data agregasi per jam disimpan 1 tahun).
+- Koordinasi spesifikasi skema response REST API dan event payload WebSocket dengan tim Frontend (Web & Mobile).
+- Mekanisme autentikasi JWT token antara Fastify backend dan client dashboard.
 - Strategi buffering lokal di Raspberry Pi jika koneksi internet/MQTT sempat terputus.
+
+---
+
+## 9. Sistem Autentikasi & Hak Akses (Role-Based Access Control)
+
+Backend menerapkan autentikasi berbasis JSON Web Token (JWT) dengan Role-Based Access Control (RBAC) pada tabel `users`. Setiap permintaan ke REST API (kecuali endpoint publik seperti `/health` dan `/api/auth/login`) wajib menyertakan header `Authorization: Bearer <token>`.
+
+### Daftar Role Pengguna
+
+| Role | Deskripsi | Hak Akses |
+|---|---|---|
+| **admin** | Administrator teknis / sistem | Akses penuh: CRUD master data tangki, konfigurasi threshold, manajemen pengguna, manajemen gateway, dan audit log. |
+| **operator** | Petugas / teknisi lapangan rumah sakit | Read master data & monitoring, melakukan resolve/penanganan alert peringatan, memperbarui status operasional tangki. |
+| **viewer** | Pihak manajemen / dashboard display | Read-only: Melihat status level air, grafik histori 24 jam, dan riwayat alert aktif tanpa hak manipulasi data. |
+
+### Matriks Akses Endpoint REST API
+
+| Endpoint | Method | Role yang Diizinkan | Keterangan |
+|---|---|---|---|
+| `/health` | GET | Publik (Tanpa Auth) | Probe health check server & database |
+| `/api/auth/login` | POST | Publik (Tanpa Auth) | Otentikasi username & password, mengembalikan token JWT |
+| `/api/auth/me` | GET | `admin`, `operator`, `viewer` | Profil pengguna saat ini dari token |
+| `/api/users` | GET | `admin` | Daftar seluruh akun pengguna sistem |
+| `/api/users` | POST | `admin` | Menambahkan akun pengguna baru |
+| `/api/users/:id` | PATCH, PUT | `admin` | Memperbarui role atau status keaktifan pengguna |
+| `/api/users/:id` | DELETE | `admin` | Menghapus atau menonaktifkan pengguna |
+| `/api/tanks` | GET | `admin`, `operator`, `viewer` | Daftar seluruh tangki beserta status terbaru & sensor node |
+| `/api/tanks/:id` | GET | `admin`, `operator`, `viewer` | Detail data tangki beserta 50 pembacaan & alert terakhir |
+| `/api/tanks/:id/readings` | GET | `admin`, `operator`, `viewer` | Histori time-series level air tangki tertentu (query: `hours`, `limit`) |
+| `/api/tanks` | POST | `admin` | Menambahkan master tangki baru beserta konfigurasi threshold |
+| `/api/tanks/:id` | PATCH, PUT | `admin` | Memperbarui data tangki atau batas threshold peringatan |
+| `/api/tanks/:id` | DELETE | `admin` | Menghapus master tangki |
+| `/api/readings/latest` | GET | `admin`, `operator`, `viewer` | Pembacaan level air terkini seluruh tangki |
+| `/api/readings/history` | GET | `admin`, `operator`, `viewer` | Agregasi data time-series histori seluruh tangki |
+| `/api/alerts` | GET | `admin`, `operator`, `viewer` | Daftar riwayat alert (opsional filter `?status=active` atau `resolved`) |
+| `/api/alerts/:id/resolve`| PATCH, PUT | `admin`, `operator` | Menandai alert bahaya sebagai selesai / ditangani |
+| `/api/gateways` | GET | `admin`, `operator` | Informasi kesehatan perangkat gateway Raspberry Pi |
+| `/api/gateways/:deviceCode/sync`| GET | Internal / Gateway Key / `admin` | Endpoint sinkronisasi mapping tangki & sensor untuk Raspberry Pi |
+| `/api/nodes` | GET | `admin`, `operator`, `viewer` | Daftar seluruh modul sensor node STM32 beserta relasinya |
+| `/api/audit-logs` | GET | `admin` | Audit trail aktivitas pengguna di sistem (paginated) |
+| `/api/reports/readings/export` | GET | `admin`, `operator`, `viewer` | Download data pembacaan sensor dalam format CSV |
+| `/api/reports/alerts/export` | GET | `admin`, `operator`, `viewer` | Download rekapitulasi riwayat peringatan dalam format CSV |
+
+---
+
+## 10. Protokol Komunikasi Gateway Raspberry Pi ke Backend di VPS
+
+Raspberry Pi bertindak sebagai gateway sentral yang menerima sinyal telemetri LoRa dari modul STM32 di tiap tangki, lalu meneruskannya ke broker MQTT di VPS.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant STM as STM32 (Node Sensor)
+    participant RPI as Raspberry Pi (Gateway)
+    participant BRK as Mosquitto MQTT (VPS)
+    participant API as Fastify Backend (VPS)
+    participant DB as TimescaleDB / Redis (VPS)
+
+    Note over RPI,API: Fase 1: Booting & Sinkronisasi Mapping (HTTP GET)
+    RPI->>API: GET /api/gateways/GW-HUB-01/sync (X-Gateway-Secret)
+    API->>DB: Query relasi Tank & Sensor Nodes
+    DB-->>API: Data mapping (device_code, tank_id, sensor_node_id)
+    API-->>RPI: JSON Dictionary Mapping (disimpan di RAM/file lokal)
+
+    Note over STM,DB: Fase 2: Pengiriman Telemetri Berulang (LoRa -> MQTT)
+    STM->>RPI: LoRa Packet: { node_code: "STM32-ATA", raw_val: 820, level: 78.5 }
+    RPI->>RPI: Cocokkan node_code dengan Mapping -> dapatkan tank_id UUID
+    RPI->>BRK: MQTT Publish: hospital/{tank_id}/level { tank_id, sensor_node_id, level_percent, ... }
+    BRK->>API: MQTT Subscriber menerima pesan
+    API->>DB: Buffer ke Redis Streams & Evaluasi Warning Engine
+    API-->>DB: Batch Writer menyimpan ke TimescaleDB
+```
+
+### Cara Raspberry Pi Mendapatkan `tank_id` dan `sensor_node_id`
+
+Terdapat 2 mekanisme integrasi yang didukung secara *hybrid*:
+
+#### 1. Mekanisme Utama: Auto-Sync Konfigurasi saat Booting
+1. Saat program gateway Python/C di Raspberry Pi dinyalakan, gateway memanggil endpoint:
+   ```http
+   GET /api/gateways/GW-HUB-01/sync
+   Header: X-Gateway-Key: <GATEWAY_SECRET_KEY>
+   ```
+2. Backend merespon dengan peta relasi lengkap tangki dan sensor:
+   ```json
+   {
+     "success": true,
+     "gateway_code": "GW-HUB-01",
+     "synced_at": "2026-09-24T15:30:00Z",
+     "mappings": [
+       {
+         "device_code": "STM32-ATA",
+         "sensor_node_id": "6b464034-79f0-46fe-a7e4-7bd3b7fa9c8a",
+         "tank_id": "a6f5ade5-777c-4871-a584-de40d11df30d",
+         "tank_name": "Tangki Atap Gedung Utama",
+         "capacity_liters": 10000
+       },
+       {
+         "device_code": "STM32-GED",
+         "sensor_node_id": "ec120989-a026-4935-bded-fae8885b2106",
+         "tank_id": "fffce8f9-04e2-4f9e-9302-fd2e1c6d1825",
+         "tank_name": "Tangki Gedung Rawat Inap",
+         "capacity_liters": 8000
+       }
+     ]
+   }
+   ```
+3. Raspberry Pi menyimpan dictionary ini di memori lokal. Ketika paket LoRa masuk dari `STM32-ATA`, Raspberry Pi langsung memasukkan `tank_id` dan `sensor_node_id` yang sesuai ke dalam payload MQTT.
+
+#### 2. Mekanisme Cadangan: Auto-Resolution di Sisi Backend
+Jika Raspberry Pi belum sempat melakukan sync atau firmware lama hanya mengirimkan kode string fisik (`sensor_node_id: "STM32-ATA"`), backend secara otomatis melakukan pencarian ke tabel `sensor_nodes` untuk menemukan relasi `tank_id`-nya secara transparan tanpa menyebabkan error validasi database.
+
+### Keamanan Jalur Komunikasi Raspberry Pi ke VPS
+* **Opsi Jaringan Terisolasi (Tailscale Mesh):** Raspberry Pi terhubung ke jaringan Tailscale yang sama dengan VPS. Komunikasi MQTT mengarah ke IP `100.94.192.102:1883` yang terenkripsi penuh melalui WireGuard tanpa mengekspos broker ke internet publik.
+* **Opsi Autentikasi Broker:** Mosquitto dapat diatur dengan autentikasi `username` dan `password` khusus perangkat IoT gateway.

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db, queryClient } from "../db/index.js";
 import { tanks, gateways, sensorNodes, users } from "../db/schema/index.js";
+import { hashPassword } from "../utils/password.js";
 
 async function initDb() {
   console.log("Inisialisasi database dan data awal...");
@@ -83,11 +84,18 @@ async function initDb() {
       .insert(users)
       .values({
         username: "admin",
-        passwordHash: "$2b$10$EpRnTzVlqHNP0.fUbXUwSOyUIXe/QLu7VfO8N91GZ2qFw57g1hK.y",
+        passwordHash: hashPassword("admin123"),
         role: "admin",
         isActive: true,
       })
-      .onConflictDoNothing();
+      .onConflictDoUpdate({
+        target: users.username,
+        set: {
+          passwordHash: hashPassword("admin123"),
+          role: "admin",
+          isActive: true,
+        },
+      });
 
     console.log("Inisialisasi database selesai");
   } catch (err) {

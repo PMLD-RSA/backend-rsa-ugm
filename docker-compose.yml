@@ -31,7 +31,28 @@ services:
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
 
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: water_tank_backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - DATABASE_URL=postgresql://postgres:postgres@timescaledb:5432/water_tank_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MQTT_BROKER_URL=mqtt://mosquitto:1883
+      - JWT_SECRET=super_secret_jwt_key_hospital_monitoring_rsa_ugm
+      - GATEWAY_SYNC_KEY=secret_gateway_rsa_ugm_2026
+    depends_on:
+      - timescaledb
+      - redis
+      - mosquitto
+
 volumes:
   timescaledb_data:
   redis_data:
-

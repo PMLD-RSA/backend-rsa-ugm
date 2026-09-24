@@ -46,8 +46,12 @@ export class BatchWriterService {
       const recordsToInsert: NewWaterLevelReading[] = [];
 
       for (const { payload } of batch) {
-        let tankId: string | null = isUUID(payload.tank_id) ? payload.tank_id : null;
-        let nodeId: string | null = isUUID(payload.sensor_node_id) ? payload.sensor_node_id : null;
+        const tankId: string | null =
+          payload.tank_id && isUUID(payload.tank_id) ? payload.tank_id : null;
+        const nodeId: string | null =
+          payload.sensor_node_id && isUUID(payload.sensor_node_id)
+            ? payload.sensor_node_id
+            : null;
 
         // Validasi UUID tank
         if (!tankId) {

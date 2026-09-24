@@ -29,6 +29,7 @@ const envSchema = z.object({
 
   JWT_SECRET: z.string().default("secret_jwt_key_hospital_water_monitoring"),
   JWT_EXPIRES_IN: z.string().default("1d"),
+  GATEWAY_SYNC_KEY: z.string().default("secret_gateway_rsa_ugm_2026"),
 });
 
 const parsed = envSchema.safeParse(process.env);

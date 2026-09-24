@@ -98,6 +98,30 @@ export class MqttSubscriberService {
     }
 
     const payload = parseResult.data;
+    const isNodeUuid = isUUID(payload.sensor_node_id);
+
+    // Auto-resolution: jika Raspberry Pi belum mengirim tank_id valid, cari relasinya di tabel sensor_nodes
+    if (!payload.tank_id || !isUUID(payload.tank_id)) {
+      const [node] = await db
+        .select({ tankId: sensorNodes.tankId, id: sensorNodes.id })
+        .from(sensorNodes)
+        .where(
+          isNodeUuid
+            ? or(eq(sensorNodes.id, payload.sensor_node_id), eq(sensorNodes.deviceCode, payload.sensor_node_id))
+            : eq(sensorNodes.deviceCode, payload.sensor_node_id)
+        )
+        .limit(1);
+
+      if (node && node.tankId) {
+        payload.tank_id = node.tankId;
+        payload.sensor_node_id = node.id;
+      } else {
+        console.warn(
+          `[MQTT] Mengabaikan payload level: tidak dapat menemukan relasi tangki untuk node '${payload.sensor_node_id}'`
+        );
+        return;
+      }
+    }
 
     // Buffer ke Redis, evaluasi alert, dan kirim ke websocket
     await RedisStreamService.pushReading(payload);

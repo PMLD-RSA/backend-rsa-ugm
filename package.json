@@ -1,7 +1,7 @@
 {
   "name": "backend-rsa-ugm",
   "version": "1.0.0",
-  "description": "WP-3 Backend, Database & Monitoring/Warning Engine for Integrated Hospital Water Tank Monitoring Research Project",
+  "description": "Backend, Database & Monitoring/Warning Engine for Integrated Hospital Water Tank Monitoring Research Project (RSA UGM)",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {

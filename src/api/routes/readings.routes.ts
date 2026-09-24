@@ -1,37 +1,56 @@
 import { FastifyInstance } from "fastify";
-import { eq, gte, asc } from "drizzle-orm";
+import { eq, gte, desc, asc, and } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { waterLevelReadings } from "../../db/schema/index.js";
-import { readingsQuerySchema } from "../../schemas/api.schema.js";
+import { waterLevelReadings, tanks } from "../../db/schema/index.js";
 
 export async function readingsRoutes(fastify: FastifyInstance) {
-  // Histori pembacaan level air
-  fastify.get<{
-    Params: { id: string };
-    Querystring: { hours?: string; limit?: string };
-  }>("/api/tanks/:id/readings", async (request, reply) => {
-    const { id } = request.params;
-    const query = readingsQuerySchema.parse(request.query);
+  const authGuard = { preHandler: [fastify.authenticate] };
 
-    const sinceDate = new Date(Date.now() - query.hours * 60 * 60 * 1000);
+  // Pembacaan level air terkini seluruh tangki
+  fastify.get("/api/readings/latest", authGuard, async (_request, reply) => {
+    const allTanks = await db.select().from(tanks);
+
+    const data = await Promise.all(
+      allTanks.map(async (t) => {
+        const [latest] = await db
+          .select()
+          .from(waterLevelReadings)
+          .where(eq(waterLevelReadings.tankId, t.id))
+          .orderBy(desc(waterLevelReadings.recordedAt))
+          .limit(1);
+
+        return {
+          tankId: t.id,
+          tankName: t.name,
+          reading: latest ?? null,
+        };
+      })
+    );
+
+    return reply.send({ success: true, data });
+  });
+
+  // Histori agregasi seluruh tangki
+  fastify.get<{
+    Querystring: { hours?: string };
+  }>("/api/readings/history", authGuard, async (request, reply) => {
+    const hours = parseInt(request.query.hours || "24", 10);
+    const sinceDate = new Date(Date.now() - hours * 60 * 60 * 1000);
 
     const readings = await db
-      .select()
+      .select({
+        id: waterLevelReadings.id,
+        tankId: waterLevelReadings.tankId,
+        levelPercent: waterLevelReadings.levelPercent,
+        volumeLiters: waterLevelReadings.volumeLiters,
+        recordedAt: waterLevelReadings.recordedAt,
+      })
       .from(waterLevelReadings)
-      .where(
-        eq(waterLevelReadings.tankId, id) &&
-        gte(waterLevelReadings.recordedAt, sinceDate)
-      )
-      .orderBy(asc(waterLevelReadings.recordedAt))
-      .limit(query.limit);
+      .where(gte(waterLevelReadings.recordedAt, sinceDate))
+      .orderBy(desc(waterLevelReadings.recordedAt))
+      .limit(1000);
 
-    return reply.send({
-      success: true,
-      tankId: id,
-      hours: query.hours,
-      count: readings.length,
-      data: readings,
-    });
+    return reply.send({ success: true, data: readings });
   });
 }
 

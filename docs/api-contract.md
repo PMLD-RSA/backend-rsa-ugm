@@ -1,7 +1,7 @@
 # DOKUMEN KONTRAK API & SPESIFIKASI REALTIME
-## Integrated Hospital Water Tank Monitoring Research Project (RSA UGM - WP-3)
+## Integrated Hospital Water Tank Monitoring Research Project (RSA UGM)
 
-Dokumen ini merupakan kontrak resmi antarmuka data antara **Backend (WP-3)** dan **Frontend Web (Next.js) & Mobile (React Native) (WP-4)**. Dokumen ini juga menjadi acuan mutlak bagi **UI/UX Designer** dalam merancang tata letak antarmuka di Figma.
+Dokumen ini merupakan kontrak resmi antarmuka data antara **Backend** dan **Frontend Web (Next.js) & Mobile (React Native)**. Dokumen ini juga menjadi acuan mutlak bagi **UI/UX Designer** dalam merancang tata letak antarmuka di Figma.
 
 ---
 
@@ -303,6 +303,59 @@ Mengambil deret waktu (*time-series*) ketinggian dan volume air untuk dirender m
 
 ---
 
+### 3.4.1 Pembacaan Level Air Terkini Seluruh Tangki
+Mengambil data pembacaan sensor paling mutakhir dari setiap tangki yang terdaftar di sistem.
+
+* **Endpoint:** `GET /api/readings/latest`
+* **Autentikasi:** Bearer Token
+* **Respons Berhasil (200 OK):**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "tankId": "e0a7e584-6091-4560-b6aa-cf4a852875a1",
+      "tankName": "Tangki Atap Gedung Utama",
+      "reading": {
+        "id": 14205,
+        "levelPercent": "72.40",
+        "volumeLiters": "7240.00",
+        "rawValue": "812.00",
+        "rssi": -78,
+        "recordedAt": "2026-09-19T05:35:10.000Z"
+      }
+    }
+  ]
+}
+```
+
+---
+
+### 3.4.2 Histori Agregasi Seluruh Tangki (Multi-Tank History)
+Mengambil agregasi data historis dari seluruh tangki untuk keperluan komparasi grafik di dashboard.
+
+* **Endpoint:** `GET /api/readings/history`
+* **Autentikasi:** Bearer Token
+* **Query Parameters:**
+  * `hours` (`number`, opsional, default: `24`): Rentang waktu dalam jam.
+* **Respons Berhasil (200 OK):**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 14205,
+      "tankId": "e0a7e584-6091-4560-b6aa-cf4a852875a1",
+      "levelPercent": "72.40",
+      "volumeLiters": "7240.00",
+      "recordedAt": "2026-09-19T05:35:10.000Z"
+    }
+  ]
+}
+```
+
+---
+
 ### 3.5 Tambah Master Tangki Baru
 Digunakan pada form modal tambah tangki di menu pengaturan/manajemen.
 
@@ -383,6 +436,22 @@ Digunakan untuk mengedit data tangki atau menyetel ulang batas peringatan kritis
     "createdAt": "2026-09-14T06:02:15.123Z",
     "updatedAt": "2026-09-19T05:42:00.000Z"
   }
+}
+```
+
+---
+
+### 3.6.1 Hapus Master Tangki
+Digunakan untuk menghapus data tangki dari sistem. Seluruh data sensor node dan pembacaan terkait akan dihapus secara cascade.
+
+* **Endpoint:** `DELETE /api/tanks/:id`
+* **Autentikasi:** Bearer Token (Khusus role `admin`)
+* **URL Parameter:** `id` (UUID tangki)
+* **Respons Berhasil (200 OK):**
+```json
+{
+  "success": true,
+  "message": "Tank deleted successfully"
 }
 ```
 
@@ -496,6 +565,30 @@ Digunakan pada halaman status infrastruktur perangkat / hardware health.
       "tankName": "Tangki Atap Gedung Utama",
       "gatewayId": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
       "gatewayCode": "GW-HUB-01"
+    }
+  ]
+}
+```
+
+#### C. Sinkronisasi Mapping Gateway (Khusus Raspberry Pi)
+Dipanggil oleh Raspberry Pi saat proses booting untuk mengambil peta relasi seluruh modul STM32, tangki, dan sensor node.
+
+* **Endpoint:** `GET /api/gateways/:deviceCode/sync`
+* **URL Parameter:** `deviceCode` (Kode gateway, contoh: `GW-HUB-01`)
+* **Header Wajib:** `X-Gateway-Key: <GATEWAY_SYNC_KEY>` atau Bearer Token Admin
+* **Respons Berhasil (200 OK):**
+```json
+{
+  "success": true,
+  "gatewayCode": "GW-HUB-01",
+  "syncedAt": "2026-09-24T15:30:00.000Z",
+  "mappings": [
+    {
+      "deviceCode": "STM32-ATA",
+      "sensorNodeId": "6b464034-79f0-46fe-a7e4-7bd3b7fa9c8a",
+      "tankId": "a6f5ade5-777c-4871-a584-de40d11df30d",
+      "tankName": "Tangki Atap Gedung Utama",
+      "capacityLiters": "10000.00"
     }
   ]
 }
@@ -660,6 +753,22 @@ Memperbarui hak akses atau menonaktifkan akun pengguna.
     "role": "admin",
     "isActive": false
   }
+}
+```
+
+---
+
+### 3.14.1 Manajemen Pengguna: Hapus / Nonaktifkan Pengguna
+Menghapus akun pengguna dari sistem.
+
+* **Endpoint:** `DELETE /api/users/:id`
+* **Header Wajib:** `Authorization: Bearer <token>` (Khusus role `admin`)
+* **URL Parameter:** `id` (UUID pengguna)
+* **Respons Berhasil (200 OK):**
+```json
+{
+  "success": true,
+  "message": "User deleted successfully"
 }
 ```
 

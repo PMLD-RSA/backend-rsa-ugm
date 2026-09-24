@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Hospital Water Tank Monitoring API
-  description: WP-3 Backend REST API & Realtime Monitoring Specification for Integrated Hospital Water Tank Monitoring Research Project (RSA UGM).
+  description: Backend REST API & Realtime Monitoring Specification for Integrated Hospital Water Tank Monitoring Research Project (RSA UGM).
   version: 1.0.0
 servers:
   - url: http://localhost:8000
@@ -42,8 +42,10 @@ paths:
                     items:
                       $ref: '#/components/schemas/TankDetail'
     post:
-      summary: Create new tank
+      summary: Create new tank (Admin only)
       description: Registers a new water tank into the monitoring system.
+      security:
+        - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -65,6 +67,10 @@ paths:
                     $ref: '#/components/schemas/Tank'
         '400':
           description: Validation error
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
 
   /api/tanks/{id}:
     get:
@@ -93,8 +99,10 @@ paths:
         '404':
           description: Tank not found
     patch:
-      summary: Update tank
-      description: Update tank metadata or threshold limits.
+      summary: Update tank metadata / threshold limits (Admin only)
+      description: Update specific fields of a water tank.
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -111,13 +119,100 @@ paths:
       responses:
         '200':
           description: Tank updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Tank'
+        '400':
+          description: Validation error
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
+        '404':
+          description: Tank not found
+    put:
+      summary: Replace / update tank data (Admin only)
+      description: Idempotent update for water tank properties.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTankInput'
+      responses:
+        '200':
+          description: Tank updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Tank'
+        '400':
+          description: Validation error
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
+        '404':
+          description: Tank not found
+    delete:
+      summary: Delete tank (Admin only)
+      description: Remove a tank master record and log audit trail.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Tank deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Tank deleted successfully"
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
         '404':
           description: Tank not found
 
   /api/tanks/{id}/readings:
     get:
-      summary: Get historical time-series readings
-      description: Fetch time-series water level readings for charting and trend analysis.
+      summary: Get historical time-series readings for a tank
+      description: Fetch time-series water level readings for a specific tank for charting and trend analysis.
       parameters:
         - name: id
           in: path
@@ -129,15 +224,15 @@ paths:
           in: query
           required: false
           schema:
-            type: number
+            type: integer
             default: 24
           description: Number of historical hours to query
         - name: limit
           in: query
           required: false
           schema:
-            type: number
-            default: 1000
+            type: integer
+            default: 500
           description: Maximum number of records to return
       responses:
         '200':
@@ -154,20 +249,78 @@ paths:
                     type: string
                     format: uuid
                   hours:
-                    type: number
+                    type: integer
                     example: 24
                   count:
-                    type: number
+                    type: integer
                     example: 288
                   data:
                     type: array
                     items:
                       $ref: '#/components/schemas/Reading'
 
+  /api/readings/latest:
+    get:
+      summary: Get latest readings for all tanks
+      description: Returns current water level readings and remaining volume for every tank.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Latest readings for all tanks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TankLatestReading'
+        '401':
+          description: Unauthorized
+
+  /api/readings/history:
+    get:
+      summary: Get aggregated readings history across all tanks
+      description: Retrieve historical time-series readings across multiple tanks within specified hours.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 24
+          description: Number of historical hours to fetch
+      responses:
+        '200':
+          description: Historical readings across all tanks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Reading'
+        '401':
+          description: Unauthorized
+
   /api/alerts:
     get:
       summary: List alerts
       description: Retrieve list of threshold alerts, optionally filtered by status.
+      security:
+        - BearerAuth: []
       parameters:
         - name: status
           in: query
@@ -187,16 +340,20 @@ paths:
                     type: boolean
                     example: true
                   count:
-                    type: number
+                    type: integer
                   data:
                     type: array
                     items:
                       $ref: '#/components/schemas/Alert'
+        '401':
+          description: Unauthorized
 
   /api/alerts/{id}/resolve:
     patch:
-      summary: Manually resolve alert
+      summary: Manually resolve alert (Operator / Admin)
       description: Mark an active alert as resolved. Broadcasts ALERT_RESOLVED event over WebSocket.
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -206,6 +363,50 @@ paths:
       responses:
         '200':
           description: Alert marked as resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Alert'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Operator or Admin role required)
+        '404':
+          description: Alert not found
+    put:
+      summary: Manually resolve alert (Idempotent)
+      description: Mark an active alert as resolved.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Alert marked as resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Alert'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Operator or Admin role required)
         '404':
           description: Alert not found
 
@@ -213,6 +414,8 @@ paths:
     get:
       summary: List all LoRa gateways
       description: Returns list of Raspberry Pi gateways with their connected STM32 sensor nodes.
+      security:
+        - BearerAuth: []
       responses:
         '200':
           description: List of gateways
@@ -228,11 +431,47 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Gateway'
+        '401':
+          description: Unauthorized
+
+  /api/gateways/{deviceCode}/sync:
+    get:
+      summary: Synchronize gateway and sensor nodes mapping
+      description: Used by Raspberry Pi gateway on boot to discover monitored tank IDs, sensor node mappings, and tank capacities.
+      security:
+        - GatewayKeyAuth: []
+        - BearerAuth: []
+      parameters:
+        - name: deviceCode
+          in: path
+          required: true
+          schema:
+            type: string
+            example: "GW-HUB-01"
+        - name: X-Gateway-Key
+          in: header
+          required: false
+          schema:
+            type: string
+          description: Pre-shared gateway security key
+      responses:
+        '200':
+          description: Gateway mappings successfully synced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewaySyncResponse'
+        '401':
+          description: Unauthorized (Invalid gateway key or missing token)
+        '404':
+          description: Gateway device code not found
 
   /api/nodes:
     get:
       summary: List all sensor nodes
       description: Returns all STM32 sensor nodes with attached tank and gateway information.
+      security:
+        - BearerAuth: []
       responses:
         '200':
           description: List of sensor nodes
@@ -245,11 +484,13 @@ paths:
                     type: boolean
                     example: true
                   count:
-                    type: number
+                    type: integer
                   data:
                     type: array
                     items:
                       $ref: '#/components/schemas/SensorNode'
+        '401':
+          description: Unauthorized
 
   /api/auth/login:
     post:
@@ -316,9 +557,13 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
     post:
       summary: Create user (Admin only)
-      description: Register a new operator or admin account.
+      description: Register a new operator, viewer, or admin account.
       security:
         - BearerAuth: []
       requestBody:
@@ -330,12 +575,31 @@ paths:
       responses:
         '201':
           description: User created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Pengguna baru berhasil dibuat"
+                  data:
+                    $ref: '#/components/schemas/User'
         '400':
           description: Validation error
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
+        '409':
+          description: Username already in use
 
   /api/users/{id}:
     patch:
-      summary: Update user role / active status
+      summary: Update user role / active status / password (Admin only)
       security:
         - BearerAuth: []
       parameters:
@@ -354,6 +618,87 @@ paths:
       responses:
         '200':
           description: User updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Pengguna berhasil diperbarui"
+                  data:
+                    $ref: '#/components/schemas/User'
+        '400':
+          description: Validation error
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
+        '404':
+          description: User not found
+    put:
+      summary: Update user (Idempotent, Admin only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserInput'
+      responses:
+        '200':
+          description: User updated successfully
+        '400':
+          description: Validation error
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: User not found
+    delete:
+      summary: Delete user account (Admin only)
+      description: Remove a user account permanently from the system.
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "User deleted successfully"
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
+        '404':
+          description: User not found
 
   /api/audit-logs:
     get:
@@ -398,11 +743,15 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/AuditLog'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden (Admin role required)
 
   /api/reports/readings/export:
     get:
       summary: Export historical readings
-      description: Download water level readings as CSV/XLSX.
+      description: Download water level readings formatted as CSV.
       security:
         - BearerAuth: []
       parameters:
@@ -431,11 +780,20 @@ paths:
       responses:
         '200':
           description: File download binary stream
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Missing required tankId
+        '401':
+          description: Unauthorized
 
   /api/reports/alerts/export:
     get:
       summary: Export alerts history
-      description: Download alerts history as CSV/XLSX.
+      description: Download alerts history formatted as CSV.
       security:
         - BearerAuth: []
       parameters:
@@ -463,6 +821,13 @@ paths:
       responses:
         '200':
           description: File download binary stream
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Unauthorized
 
 components:
   schemas:
@@ -589,6 +954,19 @@ components:
           type: string
           format: date-time
 
+    TankLatestReading:
+      type: object
+      properties:
+        tankId:
+          type: string
+          format: uuid
+        tankName:
+          type: string
+          example: "Tangki Atap Gedung Utama"
+        reading:
+          $ref: '#/components/schemas/Reading'
+          nullable: true
+
     Alert:
       type: object
       properties:
@@ -648,6 +1026,39 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/SensorNode'
+
+    GatewaySyncResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        gatewayCode:
+          type: string
+          example: "GW-HUB-01"
+        syncedAt:
+          type: string
+          format: date-time
+        mappings:
+          type: array
+          items:
+            type: object
+            properties:
+              deviceCode:
+                type: string
+                example: "STM32-GEDUNG-A"
+              sensorNodeId:
+                type: string
+                format: uuid
+              tankId:
+                type: string
+                format: uuid
+              tankName:
+                type: string
+                example: "Tangki Atap Gedung Utama"
+              capacityLiters:
+                type: string
+                example: "10000.00"
 
     SensorNode:
       type: object
@@ -790,6 +1201,9 @@ components:
           enum: [admin, operator, viewer]
         isActive:
           type: boolean
+        password:
+          type: string
+          minLength: 6
 
     AuditLog:
       type: object
@@ -829,5 +1243,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-
-
+      description: Enter JWT Bearer token obtained from /api/auth/login
+    GatewayKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Gateway-Key
+      description: Pre-shared API Key header for LoRa Gateway synchronization

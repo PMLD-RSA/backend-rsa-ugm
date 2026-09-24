@@ -1,13 +1,22 @@
 import { z } from "zod";
 
 export const mqttLevelPayloadSchema = z.object({
-  tank_id: z.string().min(1, "tank_id is required"),
+  tank_id: z.string().optional(),
   sensor_node_id: z.string().min(1, "sensor_node_id is required"),
   level_percent: z.number().min(0).max(100),
   volume_liters: z.number().min(0),
   raw_value: z.number().optional(),
   rssi: z.number().optional(),
-  timestamp: z.string().datetime().optional().default(() => new Date().toISOString()),
+  timestamp: z
+    .preprocess((val) => {
+      if (typeof val === "number" || (typeof val === "string" && val.trim().length > 0)) {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? undefined : d.toISOString();
+      }
+      return new Date().toISOString();
+    }, z.string())
+    .optional()
+    .default(() => new Date().toISOString()),
 });
 
 export type MqttLevelPayload = z.infer<typeof mqttLevelPayloadSchema>;

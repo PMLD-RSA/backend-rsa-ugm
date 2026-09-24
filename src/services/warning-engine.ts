@@ -13,7 +13,7 @@ export class WarningEngine {
   public static async evaluateLevel(payload: MqttLevelPayload): Promise<void> {
     const { tank_id, level_percent } = payload;
 
-    if (!isUUID(tank_id)) {
+    if (!tank_id || !isUUID(tank_id)) {
       return;
     }
 

@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import { db, queryClient } from "../db/index.js";
 import { tanks, gateways, sensorNodes, users } from "../db/schema/index.js";
 import { hashPassword } from "../utils/password.js";
@@ -55,19 +55,42 @@ async function initDb() {
     ];
 
     for (const t of sampleTanks) {
-      const [insertedTank] = await db
-        .insert(tanks)
-        .values(t)
-        .onConflictDoNothing()
-        .returning();
+      const existing = await db
+        .select()
+        .from(tanks)
+        .where(eq(tanks.name, t.name))
+        .limit(1);
 
-      if (insertedTank && gw) {
+      let tankId: string | undefined;
+
+      if (existing.length > 0) {
+        await db
+          .update(tanks)
+          .set({
+            location: t.location,
+            capacityLiters: t.capacityLiters,
+            minThresholdPercent: t.minThresholdPercent,
+            maxThresholdPercent: t.maxThresholdPercent,
+            latitude: t.latitude,
+            longitude: t.longitude,
+          })
+          .where(eq(tanks.id, existing[0].id));
+        tankId = existing[0].id;
+      } else {
+        const [insertedTank] = await db
+          .insert(tanks)
+          .values(t)
+          .returning();
+        tankId = insertedTank?.id;
+      }
+
+      if (tankId && gw) {
         await db
           .insert(sensorNodes)
           .values({
-            tankId: insertedTank.id,
+            tankId: tankId,
             gatewayId: gw.id,
-            deviceCode: `STM32-${insertedTank.name.substring(7, 10).toUpperCase()}`,
+            deviceCode: `STM32-${t.name.substring(7, 10).toUpperCase()}`,
             sensorType: "ultrasonic",
             status: "active",
             lastSeen: new Date(),

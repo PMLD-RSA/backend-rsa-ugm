@@ -14,6 +14,7 @@ import { alertsRoutes } from "./routes/alerts.routes.js";
 import { gatewaysRoutes } from "./routes/gateways.routes.js";
 import { auditLogsRoutes } from "./routes/audit-logs.routes.js";
 import { reportsRoutes } from "./routes/reports.routes.js";
+import { protoRoutes } from "./routes/proto.routes.js";
 
 export async function createServer() {
   const fastify = Fastify({
@@ -53,6 +54,7 @@ export async function createServer() {
   await fastify.register(gatewaysRoutes);
   await fastify.register(auditLogsRoutes);
   await fastify.register(reportsRoutes);
+  await fastify.register(protoRoutes);
 
   return fastify;
 }

@@ -17,8 +17,12 @@ info:
     * **Gateway Key (`X-Gateway-Key`):** Kunci pra-berbagi (*pre-shared key*) untuk otentikasi sinkronisasi perangkat keras Raspberry Pi.
   version: 1.0.0
 servers:
+  - url: /
+    description: Server Aktif (Otomatis Mendeteksi Host)
+  - url: http://100.94.192.102:8000
+    description: Remote VPS (Tailscale)
   - url: http://localhost:8000
-    description: Local Development Server
+    description: Localhost Development Server
 
 paths:
   /health:

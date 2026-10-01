@@ -22,7 +22,7 @@ async function initDb() {
     }
 
     // Data awal gateway
-    const [gw] = await db
+    let [gw] = await db
       .insert(gateways)
       .values({
         deviceCode: "GW-HUB-01",
@@ -31,6 +31,15 @@ async function initDb() {
       })
       .onConflictDoNothing()
       .returning();
+
+    if (!gw) {
+      const [existingGw] = await db
+        .select()
+        .from(gateways)
+        .where(eq(gateways.deviceCode, "GW-HUB-01"))
+        .limit(1);
+      gw = existingGw;
+    }
 
     // Data awal tangki dan sensor (2 tangki utama dengan koordinat RSA UGM)
     const sampleTanks = [
@@ -85,17 +94,35 @@ async function initDb() {
       }
 
       if (tankId && gw) {
-        await db
-          .insert(sensorNodes)
-          .values({
-            tankId: tankId,
-            gatewayId: gw.id,
-            deviceCode: `STM32-${t.name.substring(7, 10).toUpperCase()}`,
-            sensorType: "ultrasonic",
-            status: "active",
-            lastSeen: new Date(),
-          })
-          .onConflictDoNothing();
+        const deviceCode = `STM32-${t.name.substring(7, 10).toUpperCase()}`;
+        const [existingNode] = await db
+          .select()
+          .from(sensorNodes)
+          .where(eq(sensorNodes.deviceCode, deviceCode))
+          .limit(1);
+
+        if (existingNode) {
+          await db
+            .update(sensorNodes)
+            .set({
+              tankId: tankId,
+              gatewayId: gw.id,
+              status: "active",
+              lastSeen: new Date(),
+            })
+            .where(eq(sensorNodes.id, existingNode.id));
+        } else {
+          await db
+            .insert(sensorNodes)
+            .values({
+              tankId: tankId,
+              gatewayId: gw.id,
+              deviceCode: deviceCode,
+              sensorType: "ultrasonic",
+              status: "active",
+              lastSeen: new Date(),
+            });
+        }
       }
     }
 

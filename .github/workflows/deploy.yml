@@ -1,13 +1,16 @@
-name: CI/CD Deployment
+name: CI
 
 on:
   push:
     branches:
       - main
       - master
+  pull_request:
+    branches:
+      - main
+      - master
 
 jobs:
-  # Tahap 1: Validasi kode (CI)
   build-and-test:
     name: Build and Typecheck
     runs-on: ubuntu-latest
@@ -26,35 +29,3 @@ jobs:
 
       - name: Typecheck & Build
         run: npm run build
-
-  # Tahap 2: Deployment via Tailscale SSH (CD)
-  deploy:
-    name: Deploy to VPS via Tailscale
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    steps:
-      # Hubungkan GitHub Runner ke jaringan Tailscale secara ephemeral
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v3
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
-          tags: tag:ci
-
-      # Eksekusi deployment melalui SSH ke IP Tailscale
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 100.94.192.102
-          username: luis
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            set -e
-            cd /home/luis/backend-rsa-ugm
-            git pull origin master
-            npm ci
-            npm run build
-            npm run db:push
-            pm2 restart backend-rsa-ugm
-            pm2 status backend-rsa-ugm

@@ -3,6 +3,8 @@ import { z } from "zod";
 export const createTankSchema = z.object({
   name: z.string().min(1).max(100),
   location: z.string().max(150).optional(),
+  latitude: z.number().min(-90).max(90).nullable().optional(),
+  longitude: z.number().min(-180).max(180).nullable().optional(),
   capacityLiters: z.number().positive(),
   minThresholdPercent: z.number().min(0).max(100).default(30),
   maxThresholdPercent: z.number().min(0).max(100).default(90),
@@ -23,4 +25,3 @@ export const readingsQuerySchema = z.object({
 export const resolveAlertSchema = z.object({
   note: z.string().optional(),
 });
-

@@ -1,7 +1,20 @@
 openapi: 3.0.3
 info:
   title: Hospital Water Tank Monitoring API
-  description: Backend REST API & Realtime Monitoring Specification for Integrated Hospital Water Tank Monitoring Research Project (RSA UGM).
+  description: |
+    Spesifikasi Backend REST API, Realtime WebSocket Stream, dan MQTT Ingestion untuk Sistem Monitoring Tangki Air Rumah Sakit (RSA UGM).
+
+    ### Protokol & Saluran Komunikasi
+    1. **REST API:** `http://<host>:8000` (Manajemen tangki, histori pembacaan, audit log, pengguna, laporan CSV).
+    2. **Realtime WebSocket:** `ws://<host>:8000/ws` (Streaming telemetri langsung & notifikasi peringatan ambang batas).
+    3. **MQTT Broker:** `mqtt://<host>:1883` (Ingestion data sensor STM32 & LoRa Gateway).
+       * Topik Level: `hospital/{tank_id}/level` (QoS 0)
+       * Topik Status: `hospital/{tank_id}/status` (QoS 1)
+       * Topik Heartbeat: `hospital/{tank_id}/heartbeat` (QoS 0)
+
+    ### Keamanan & Otentikasi
+    * **JWT Bearer Token:** Diperoleh melalui `POST /api/auth/login`, digunakan untuk otentikasi operator dan admin.
+    * **Gateway Key (`X-Gateway-Key`):** Kunci pra-berbagi (*pre-shared key*) untuk otentikasi sinkronisasi perangkat keras Raspberry Pi.
   version: 1.0.0
 servers:
   - url: http://localhost:8000
@@ -829,6 +842,28 @@ paths:
         '401':
           description: Unauthorized
 
+  /ws:
+    get:
+      summary: Realtime WebSocket Stream
+      description: |
+        Endpoint koneksi WebSocket dua arah untuk streaming data telemetri level air dan notifikasi alert secara realtime.
+
+        URL Akses: `ws://<host>:8000/ws`
+
+        **Daftar Event Broadcast Server:**
+        * `CONNECTED`: Dikirimkan server begitu client pertama kali terhubung.
+        * `LEVEL_UPDATE`: Disiarkan instan setiap kali sensor membaca volume/level air baru dari tangki.
+        * `ALERT_TRIGGERED`: Disiarkan instan saat level air menembus ambang batas (WARNING 30-60% atau CRITICAL <30%).
+        * `ALERT_RESOLVED`: Disiarkan saat kondisi air normal kembali atau alert diselesaikan manual oleh operator.
+        * `NODE_STATUS`: Disiarkan saat status konektivitas node sensor STM32 berubah (online/offline/error).
+      responses:
+        '101':
+          description: Switching Protocols ke WebSocket connection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebSocketEvent'
+
 components:
   schemas:
     HealthResponse:
@@ -853,6 +888,26 @@ components:
           type: string
           format: date-time
 
+    WebSocketEvent:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [CONNECTED, LEVEL_UPDATE, ALERT_TRIGGERED, ALERT_RESOLVED, NODE_STATUS]
+          example: "LEVEL_UPDATE"
+        message:
+          type: string
+          nullable: true
+          example: "Terhubung ke stream realtime monitoring tangki"
+        data:
+          type: object
+          nullable: true
+          description: Payload dinamis sesuai event type
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-10-01T02:25:00.000Z"
+
     Tank:
       type: object
       properties:
@@ -875,6 +930,14 @@ components:
         maxThresholdPercent:
           type: string
           example: "90.00"
+        latitude:
+          type: string
+          nullable: true
+          example: "-7.7428450"
+        longitude:
+          type: string
+          nullable: true
+          example: "110.3511200"
         createdAt:
           type: string
           format: date-time
@@ -908,6 +971,14 @@ components:
           type: number
           default: 90
           example: 90
+        latitude:
+          type: number
+          nullable: true
+          example: -7.742845
+        longitude:
+          type: number
+          nullable: true
+          example: 110.35112
 
     UpdateTankInput:
       type: object
@@ -922,6 +993,14 @@ components:
           type: number
         maxThresholdPercent:
           type: number
+        latitude:
+          type: number
+          nullable: true
+          example: -7.742845
+        longitude:
+          type: number
+          nullable: true
+          example: 110.35112
 
     Reading:
       type: object

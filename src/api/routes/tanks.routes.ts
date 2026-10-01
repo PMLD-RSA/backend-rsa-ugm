@@ -1,4 +1,4 @@
-import { FastifyInstance } from "fastify";
+import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { eq, desc, and, gte } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { tanks, waterLevelReadings, alerts, sensorNodes, auditLogs } from "../../db/schema/index.js";
@@ -125,14 +125,23 @@ export async function tanksRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const { name, location, capacityLiters, minThresholdPercent, maxThresholdPercent } =
-      parseResult.data;
+    const {
+      name,
+      location,
+      latitude,
+      longitude,
+      capacityLiters,
+      minThresholdPercent,
+      maxThresholdPercent,
+    } = parseResult.data;
 
     const [newTank] = await db
       .insert(tanks)
       .values({
         name,
         location: location ?? null,
+        latitude: latitude !== undefined && latitude !== null ? latitude.toString() : null,
+        longitude: longitude !== undefined && longitude !== null ? longitude.toString() : null,
         capacityLiters: capacityLiters.toString(),
         minThresholdPercent: minThresholdPercent.toString(),
         maxThresholdPercent: maxThresholdPercent.toString(),
@@ -154,7 +163,10 @@ export async function tanksRoutes(fastify: FastifyInstance) {
   });
 
   // Handler update tangki (Mendukung PATCH dan PUT)
-  const handleUpdateTank = async (request: any, reply: any) => {
+  const handleUpdateTank = async (
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply
+  ) => {
     const { id } = request.params;
     const parseResult = updateTankSchema.safeParse(request.body);
 
@@ -172,6 +184,10 @@ export async function tanksRoutes(fastify: FastifyInstance) {
 
     if (parseResult.data.name !== undefined) updateData.name = parseResult.data.name;
     if (parseResult.data.location !== undefined) updateData.location = parseResult.data.location;
+    if (parseResult.data.latitude !== undefined)
+      updateData.latitude = parseResult.data.latitude !== null ? parseResult.data.latitude.toString() : null;
+    if (parseResult.data.longitude !== undefined)
+      updateData.longitude = parseResult.data.longitude !== null ? parseResult.data.longitude.toString() : null;
     if (parseResult.data.capacityLiters !== undefined)
       updateData.capacityLiters = parseResult.data.capacityLiters.toString();
     if (parseResult.data.minThresholdPercent !== undefined)

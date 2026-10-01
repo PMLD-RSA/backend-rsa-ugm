@@ -32,7 +32,7 @@ async function initDb() {
       .onConflictDoNothing()
       .returning();
 
-    // Data awal tangki dan sensor
+    // Data awal tangki dan sensor (2 tangki utama dengan koordinat RSA UGM)
     const sampleTanks = [
       {
         name: "Tangki Atap Gedung Utama",
@@ -40,20 +40,17 @@ async function initDb() {
         capacityLiters: "10000.00",
         minThresholdPercent: "30.00",
         maxThresholdPercent: "90.00",
+        latitude: "-7.7428450",
+        longitude: "110.3511200",
       },
       {
         name: "Tangki Gedung Rawat Inap",
-        location: "Atap Gedung B, Lantai 4",
+        location: "Atap Gedung B (Rawat Inap), Lantai 4",
         capacityLiters: "8000.00",
         minThresholdPercent: "30.00",
         maxThresholdPercent: "90.00",
-      },
-      {
-        name: "Tangki Instalasi Bedah Sentral",
-        location: "Gedung IBS Lantai 3",
-        capacityLiters: "5000.00",
-        minThresholdPercent: "35.00",
-        maxThresholdPercent: "90.00",
+        latitude: "-7.7431200",
+        longitude: "110.3515400",
       },
     ];
 

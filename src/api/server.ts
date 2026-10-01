@@ -4,6 +4,7 @@ import sensible from "@fastify/sensible";
 import { env } from "../config/env.js";
 import { jwtPlugin } from "./plugins/jwt.js";
 import { websocketPlugin } from "./plugins/websocket.js";
+import { swaggerPlugin } from "./plugins/swagger.js";
 import { healthRoutes } from "./routes/health.routes.js";
 import { authRoutes } from "./routes/auth.routes.js";
 import { usersRoutes } from "./routes/users.routes.js";
@@ -40,6 +41,7 @@ export async function createServer() {
   await fastify.register(sensible);
   await fastify.register(jwtPlugin);
   await fastify.register(websocketPlugin);
+  await fastify.register(swaggerPlugin);
 
   // Route API
   await fastify.register(healthRoutes);
@@ -65,6 +67,7 @@ export async function startServer() {
     });
     console.log(`Server API & WebSocket berjalan di ${address}`);
     console.log(`WebSocket stream: ws://${env.HOST === "0.0.0.0" ? "localhost" : env.HOST}:${env.PORT}/ws`);
+    console.log(`Swagger UI API Docs: http://${env.HOST === "0.0.0.0" ? "localhost" : env.HOST}:${env.PORT}/docs`);
     return server;
   } catch (err) {
     server.log.error(err);
@@ -76,3 +79,4 @@ export async function startServer() {
 if (process.argv[1]?.endsWith("server.ts") || process.argv[1]?.endsWith("server.js")) {
   startServer();
 }
+

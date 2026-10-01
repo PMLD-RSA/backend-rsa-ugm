@@ -10,6 +10,10 @@ async function testAll() {
     const resHealth = await app.inject({ method: "GET", url: "/health" });
     console.log("1. /health status:", resHealth.statusCode);
 
+    // 1b. Test Swagger UI Documentation
+    const resDocs = await app.inject({ method: "GET", url: "/docs/" });
+    console.log("1b. /docs/ status:", resDocs.statusCode, "has swagger-ui:", resDocs.body.includes("swagger-ui"));
+
     // 2. Test Login Admin
     const resLogin = await app.inject({
       method: "POST",

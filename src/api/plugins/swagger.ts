@@ -30,8 +30,7 @@ export const swaggerPlugin = fp(async (fastify: FastifyInstance) => {
       displayRequestDuration: true,
       persistAuthorization: true,
     },
-    staticCSP: true,
-    transformStaticCSP: (header) => header,
+    staticCSP: false,
   });
 
   // Alias /documentation agar otomatis redirect ke /docs

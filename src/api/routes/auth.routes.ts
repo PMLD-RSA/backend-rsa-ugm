@@ -4,10 +4,21 @@ import { db } from "../../db/index.js";
 import { users, auditLogs } from "../../db/schema/index.js";
 import { loginSchema } from "../../schemas/auth.schema.js";
 import { verifyPassword } from "../../utils/password.js";
+import { env } from "../../config/env.js";
 
 export async function authRoutes(fastify: FastifyInstance) {
-  // Login pengguna & penerbitan token JWT
-  fastify.post("/api/auth/login", async (request, reply) => {
+  // Login pengguna & penerbitan token JWT dengan pembatasan percobaan login (anti brute-force)
+  fastify.post(
+    "/api/auth/login",
+    {
+      config: {
+        rateLimit: {
+          max: env.RATE_LIMIT_LOGIN_MAX,
+          timeWindow: "1 minute",
+        },
+      },
+    },
+    async (request, reply) => {
     const parseResult = loginSchema.safeParse(request.body);
     if (!parseResult.success) {
       return reply.status(400).send({

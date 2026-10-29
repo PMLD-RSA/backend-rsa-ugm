@@ -4,11 +4,18 @@ import fastifySwaggerUi from "@fastify/swagger-ui";
 import { FastifyInstance } from "fastify";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { env } from "../../config/env.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const swaggerPlugin = fp(async (fastify: FastifyInstance) => {
+  // Jika Swagger UI dinonaktifkan di konfigurasi environment (misal di produksi publik)
+  if (!env.ENABLE_SWAGGER) {
+    fastify.log.info("[Swagger] Dokumentasi Swagger UI dinonaktifkan via konfigurasi ENABLE_SWAGGER=false");
+    return;
+  }
+
   // Lokasi dokumen openapi.yaml di folder docs
   const openapiPath = path.resolve(__dirname, "../../../docs/openapi.yaml");
 
@@ -38,4 +45,3 @@ export const swaggerPlugin = fp(async (fastify: FastifyInstance) => {
     return reply.redirect("/docs");
   });
 });
-

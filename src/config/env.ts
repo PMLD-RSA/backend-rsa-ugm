@@ -29,7 +29,21 @@ const envSchema = z.object({
 
   JWT_SECRET: z.string().default("secret_jwt_key_hospital_water_monitoring"),
   JWT_EXPIRES_IN: z.string().default("1d"),
-  GATEWAY_SYNC_KEY: z.string().default("secret_gateway_rsa_ugm_2026"),
+  GATEWAY_SYNC_KEY: z.string().default("dev_insecure_gateway_key_rsa_ugm"),
+
+  // Keamanan & Pembatasan
+  CORS_ALLOWED_ORIGINS: z.string().default(""),
+  RATE_LIMIT_GLOBAL_MAX: z.coerce.number().default(120),
+  RATE_LIMIT_LOGIN_MAX: z.coerce.number().default(5),
+  ENABLE_SWAGGER: z
+    .preprocess((val) => {
+      if (typeof val === "string") {
+        return val.toLowerCase() === "true" || val === "1";
+      }
+      if (typeof val === "boolean") return val;
+      return true;
+    }, z.boolean())
+    .default(true),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -39,5 +53,16 @@ if (!parsed.success) {
   process.exit(1);
 }
 
-export const env = parsed.data;
+// Peringatan keamanan untuk konfigurasi produksi
+if (parsed.data.NODE_ENV === "production") {
+  if (
+    parsed.data.GATEWAY_SYNC_KEY === "dev_insecure_gateway_key_rsa_ugm" ||
+    parsed.data.GATEWAY_SYNC_KEY === "secret_gateway_rsa_ugm_2026"
+  ) {
+    console.warn(
+      "[PERINGATAN KEAMANAN] GATEWAY_SYNC_KEY terdeteksi menggunakan kunci default/lemah pada mode produksi. Harap setel kunci acak yang aman di variabel lingkungan."
+    );
+  }
+}
 
+export const env = parsed.data;

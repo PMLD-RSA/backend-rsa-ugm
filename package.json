@@ -20,7 +20,9 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
+    "@fastify/helmet": "^13.2.0",
     "@fastify/jwt": "^9.0.4",
+    "@fastify/rate-limit": "^11.2.1",
     "@fastify/sensible": "^6.0.3",
     "@fastify/swagger": "^9.9.1",
     "@fastify/swagger-ui": "^6.1.1",

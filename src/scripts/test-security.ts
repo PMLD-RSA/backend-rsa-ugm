@@ -3,57 +3,102 @@ import { isAllowedOrigin } from "../utils/security.js";
 import { WebSocket } from "ws";
 
 async function runSecurityTests() {
-  console.log("=== MEMULAI PENGUJIAN KEAMANAN SISTEM ===");
+  console.log("=== MEMULAI PENGUJIAN KEAMANAN SISTEM & DUKUNGAN HTTP/SSL ===");
 
-  // 1. Pengujian isAllowedOrigin Logic
+  // 1. Pengujian isAllowedOrigin Logic (Development vs Production)
   console.log("\n[TEST 1] Pengujian Fungsi Whitelist Origin Dinamis (CORS):");
   const testOrigins = [
-    { origin: "http://localhost:3000", expected: true },
-    { origin: "http://127.0.0.1:5173", expected: true },
-    { origin: "https://ubuntu-luis.tail7e12bf.ts.net", expected: true },
-    { origin: "https://node-random-vps.ts.net", expected: true },
-    { origin: "https://another-node.tail12345.ts.net:8443", expected: true },
-    { origin: "https://evil-hacker.com", expected: false },
-    { origin: "https://phishing-site.xyz", expected: false },
-    { origin: undefined, expected: true }, // curl / server-to-server
+    { origin: "http://localhost:3000", env: "development", expected: true, desc: "Localhost HTTP di dev" },
+    { origin: "http://127.0.0.1:5173", env: "development", expected: true, desc: "127.0.0.1 HTTP di dev" },
+    { origin: "https://ubuntu-luis.tail7e12bf.ts.net", env: "development", expected: true, desc: "Tailscale Funnel HTTPS" },
+    { origin: "http://100.94.192.102:8000", env: "development", expected: true, desc: "Tailscale IP HTTP di dev" },
+    { origin: "http://192.168.1.50:3000", env: "development", expected: true, desc: "LAN IP HTTP di dev" },
+    { origin: "http://frontend-dev-app:3000", env: "development", expected: true, desc: "HTTP origin bebas di dev" },
+    { origin: "https://evil-hacker.com", env: "development", expected: false, desc: "Untrusted HTTPS di dev" },
+    { origin: "https://phishing-site.xyz", env: "development", expected: false, desc: "Untrusted domain di dev" },
+    { origin: "http://evil-hacker.com", env: "production", expected: false, desc: "Non-whitelisted HTTP di prod" },
+    { origin: undefined, env: "development", expected: true, desc: "Request server-to-server/curl tanpa origin" },
   ];
 
+  let originTestsPassed = true;
   for (const t of testOrigins) {
-    const result = isAllowedOrigin(t.origin);
+    const result = isAllowedOrigin(t.origin, t.env);
     const pass = result === t.expected;
-    console.log(`  Origin: "${t.origin}" -> Diizinkan: ${result} | Expected: ${t.expected} [${pass ? "PASS" : "FAIL"}]`);
+    if (!pass) originTestsPassed = false;
+    console.log(`  [${t.env}] ${t.desc} ("${t.origin}") -> Diizinkan: ${result} | Expected: ${t.expected} [${pass ? "PASS" : "FAIL"}]`);
   }
+  console.log(`  Status Pengujian Origin CORS: [${originTestsPassed ? "PASS" : "FAIL"}]`);
 
-  // Buat instance server Fastify
-  const server = await createServer();
+  // 2. Pengujian Header Keamanan (Helmet) pada Mode Development vs Production
+  console.log("\n[TEST 2] Pengujian Header Keamanan (Helmet) - HTTP vs SSL Enforcement:");
 
-  // Tambahkan rute ringan untuk pengujian header tanpa menyentuh database
-  server.get("/test-headers", async () => ({ status: "ok" }));
+  // A. Mode Development: Pastikan HSTS dinonaktifkan agar HTTP dapat diakses tanpa pemaksaan SSL
+  const devServer = await createServer({ nodeEnv: "development" });
+  devServer.get("/test-headers", async () => ({ status: "ok" }));
+  await devServer.ready();
 
-  await server.ready();
-
-  // 2. Pengujian Header Keamanan (Helmet)
-  console.log("\n[TEST 2] Pengujian Header Keamanan (Helmet):");
-  const headerRes = await server.inject({
+  const devHeaderRes = await devServer.inject({
     method: "GET",
     url: "/test-headers",
   });
 
-  const hsts = headerRes.headers["strict-transport-security"];
-  const xcto = headerRes.headers["x-content-type-options"];
-  const xfo = headerRes.headers["x-frame-options"];
+  const devHsts = devHeaderRes.headers["strict-transport-security"];
+  const devXcto = devHeaderRes.headers["x-content-type-options"];
+  const devXfo = devHeaderRes.headers["x-frame-options"];
 
-  console.log(`  Strict-Transport-Security: ${hsts || "TIDAK DITEMUKAN"}`);
-  console.log(`  X-Content-Type-Options: ${xcto || "TIDAK DITEMUKAN"}`);
-  console.log(`  X-Frame-Options: ${xfo || "TIDAK DITEMUKAN"}`);
+  console.log("  --- Mode Development (HTTP Friendly) ---");
+  console.log(`  Strict-Transport-Security: ${devHsts || "TIDAK DITEMUKAN (HSTS nonaktif - HTTP diizinkan)"}`);
+  console.log(`  X-Content-Type-Options: ${devXcto}`);
+  console.log(`  X-Frame-Options: ${devXfo}`);
 
-  const headersPassed = Boolean(hsts && xcto && xfo);
-  console.log(`  Status Header Keamanan: [${headersPassed ? "PASS" : "FAIL"}]`);
+  const devHstsCorrect = devHsts === undefined; // HSTS harus tidak ada di mode dev
+  const devPassed = devHstsCorrect && Boolean(devXcto && devXfo);
+  console.log(`  Status Keamanan Development (Akses HTTP tanpa pemaksaan SSL): [${devPassed ? "PASS" : "FAIL"}]`);
+  await devServer.close();
 
-  // 3. Pengujian CORS Preflight
+  // B. Mode Production: Pastikan HSTS aktif dengan preload untuk menegakkan proteksi SSL penuh
+  const prodServer = await createServer({ nodeEnv: "production" });
+  prodServer.get("/test-headers", async () => ({ status: "ok" }));
+  await prodServer.ready();
+
+  const prodHeaderRes = await prodServer.inject({
+    method: "GET",
+    url: "/test-headers",
+  });
+
+  const prodHsts = prodHeaderRes.headers["strict-transport-security"];
+  const prodXcto = prodHeaderRes.headers["x-content-type-options"];
+  const prodXfo = prodHeaderRes.headers["x-frame-options"];
+
+  console.log("  --- Mode Production (SSL Enforced) ---");
+  console.log(`  Strict-Transport-Security: ${prodHsts || "TIDAK DITEMUKAN"}`);
+  console.log(`  X-Content-Type-Options: ${prodXcto}`);
+  console.log(`  X-Frame-Options: ${prodXfo}`);
+
+  const prodHstsCorrect = Boolean(prodHsts && prodHsts.includes("max-age=31536000"));
+  const prodPassed = prodHstsCorrect && Boolean(prodXcto && prodXfo);
+  console.log(`  Status Keamanan Production (Proteksi SSL/HSTS Wajib): [${prodPassed ? "PASS" : "FAIL"}]`);
+  await prodServer.close();
+
+  // 3. Pengujian CORS Preflight & Akses HTTP pada Server Aktif
   console.log("\n[TEST 3] Pengujian Proteksi CORS Preflight:");
-  
-  // Kasus A: Origin sah (Tailscale)
+  const server = await createServer({ nodeEnv: "development" });
+  server.get("/test-headers", async () => ({ status: "ok" }));
+  await server.ready();
+
+  // Kasus A: Origin HTTP development (misal: frontend React/Next.js via HTTP)
+  const devCorsRes = await server.inject({
+    method: "OPTIONS",
+    url: "/test-headers",
+    headers: {
+      origin: "http://100.94.192.102:3000",
+      "access-control-request-method": "GET",
+    },
+  });
+  const devCorsHeader = devCorsRes.headers["access-control-allow-origin"];
+  console.log(`  HTTP Dev Origin (100.94.192.102:3000) -> Access-Control-Allow-Origin: ${devCorsHeader} [${devCorsHeader === "http://100.94.192.102:3000" ? "PASS" : "FAIL"}]`);
+
+  // Kasus B: Origin sah Tailscale HTTPS
   const allowedCorsRes = await server.inject({
     method: "OPTIONS",
     url: "/test-headers",
@@ -63,9 +108,9 @@ async function runSecurityTests() {
     },
   });
   const allowedHeader = allowedCorsRes.headers["access-control-allow-origin"];
-  console.log(`  Tailscale Origin -> Access-Control-Allow-Origin: ${allowedHeader} [${allowedHeader === "https://ubuntu-luis.tail7e12bf.ts.net" ? "PASS" : "FAIL"}]`);
+  console.log(`  Tailscale HTTPS Origin -> Access-Control-Allow-Origin: ${allowedHeader} [${allowedHeader === "https://ubuntu-luis.tail7e12bf.ts.net" ? "PASS" : "FAIL"}]`);
 
-  // Kasus B: Origin penyerang
+  // Kasus C: Origin penyerang
   const blockedCorsRes = await server.inject({
     method: "OPTIONS",
     url: "/test-headers",
@@ -98,7 +143,7 @@ async function runSecurityTests() {
   }
   console.log(`  Status Rate Limiting: [${rateLimitHit ? "PASS" : "FAIL"}]`);
 
-  // 5. Pengujian WebSocket Authentication & Origin
+  // 5. Pengujian WebSocket Authentication & Origin (Dukungan ws:// dan HTTP di Dev)
   console.log("\n[TEST 5] Pengujian WebSocket Security (/ws):");
   const testPort = 8099;
   await server.listen({ port: testPort, host: "127.0.0.1" });
@@ -143,11 +188,11 @@ async function runSecurityTests() {
   });
   console.log(`  WS origin penyerang -> ${wsBadOrigin} [${wsBadOrigin.includes("1008") || wsBadOrigin.includes("ERROR") || wsBadOrigin.includes("500") || wsBadOrigin.includes("Unexpected") ? "PASS (CORS Blocked Handshake)" : "FAIL"}]`);
 
-  // Kasus C: WebSocket dengan origin valid & token valid
-  const wsValid = await new Promise<string>((resolve) => {
+  // Kasus C: WebSocket dengan origin HTTP development & token valid
+  const wsDevValid = await new Promise<string>((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${testPort}/ws?token=${validToken}`, {
       headers: {
-        origin: "https://ubuntu-luis.tail7e12bf.ts.net",
+        origin: "http://100.94.192.102:3000",
       },
     });
     ws.on("message", (data) => {
@@ -161,10 +206,10 @@ async function runSecurityTests() {
       resolve(`Error: ${err.message}`);
     });
   });
-  console.log(`  WS token & origin valid -> ${wsValid} [${wsValid.includes("CONNECTED") ? "PASS" : "FAIL"}]`);
+  console.log(`  WS token & origin HTTP dev valid -> ${wsDevValid} [${wsDevValid.includes("CONNECTED") ? "PASS" : "FAIL"}]`);
 
   await server.close();
-  console.log("\n=== SELURUH PENGUJIAN KEAMANAN BERHASIL DISELESAIKAN ===");
+  console.log("\n=== SELURUH PENGUJIAN KEAMANAN & AKSES HTTP/SSL BERHASIL DISELESAIKAN ===");
   process.exit(0);
 }
 
@@ -172,3 +217,4 @@ runSecurityTests().catch((err) => {
   console.error("Gagal menjalankan pengujian:", err);
   process.exit(1);
 });
+

@@ -18,12 +18,18 @@ import { gatewaysRoutes } from "./routes/gateways.routes.js";
 import { auditLogsRoutes } from "./routes/audit-logs.routes.js";
 import { reportsRoutes } from "./routes/reports.routes.js";
 
-export async function createServer() {
+export interface ServerOptions {
+  nodeEnv?: "development" | "test" | "production";
+}
+
+export async function createServer(options?: ServerOptions) {
+  const currentEnv = options?.nodeEnv ?? env.NODE_ENV;
+
   const fastify = Fastify({
     logger: {
       level: env.LOG_LEVEL,
       transport:
-        env.NODE_ENV === "development"
+        currentEnv === "development"
           ? {
               target: "pino-pretty",
               options: {
@@ -36,6 +42,8 @@ export async function createServer() {
   });
 
   // 1. Header Keamanan HTTP (Helmet)
+  // Pada mode development: HSTS dinonaktifkan agar backend dapat diakses melalui HTTP tanpa pemaksaan SSL.
+  // Pada mode production: HSTS diaktifkan penuh dengan preload untuk keamanan SSL/TLS.
   await fastify.register(helmet, {
     contentSecurityPolicy: env.ENABLE_SWAGGER
       ? false // Menghindari pemblokiran file script dan css internal Swagger UI
@@ -45,22 +53,28 @@ export async function createServer() {
             styleSrc: ["'self'"],
             scriptSrc: ["'self'"],
             imgSrc: ["'self'", "data:"],
-            connectSrc: ["'self'", "wss:", "https:"],
+            connectSrc:
+              currentEnv === "development"
+                ? ["'self'", "ws:", "wss:", "http:", "https:"]
+                : ["'self'", "wss:", "https:"],
           },
         },
     crossOriginEmbedderPolicy: false,
     crossOriginResourcePolicy: { policy: "cross-origin" },
-    hsts: {
-      maxAge: 31536000,
-      includeSubDomains: true,
-      preload: true,
-    },
+    hsts:
+      currentEnv === "production"
+        ? {
+            maxAge: 31536000,
+            includeSubDomains: true,
+            preload: true,
+          }
+        : false,
   });
 
-  // 2. Proteksi CORS Dinamis (Mendukung Tailscale *.ts.net, Localhost, dan Whitelist Kustom)
+  // 2. Proteksi CORS Dinamis (Mendukung Tailscale *.ts.net, Localhost, IP Privat, dan HTTP saat Development)
   await fastify.register(cors, {
     origin: (origin, callback) => {
-      if (isAllowedOrigin(origin)) {
+      if (isAllowedOrigin(origin, currentEnv)) {
         callback(null, true);
       } else {
         callback(new Error("Akses ditolak oleh kebijakan CORS: Origin tidak diizinkan"), false);
@@ -122,6 +136,11 @@ export async function startServer() {
     console.log(`WebSocket stream: ws://${env.HOST === "0.0.0.0" ? "localhost" : env.HOST}:${env.PORT}/ws`);
     if (env.ENABLE_SWAGGER) {
       console.log(`Swagger UI API Docs: http://${env.HOST === "0.0.0.0" ? "localhost" : env.HOST}:${env.PORT}/docs`);
+    }
+    if (env.NODE_ENV === "development") {
+      console.log(`[Mode Development] Akses HTTP aktif tanpa proteksi SSL (HSTS dinonaktifkan)`);
+    } else {
+      console.log(`[Mode Production] Proteksi SSL & HSTS aktif`);
     }
     return server;
   } catch (err) {

@@ -42,6 +42,8 @@ const mockTanks: SimTank[] = [
 client.on("connect", () => {
   console.log("[Simulator] Terhubung ke broker MQTT. Mengirim data sensor simulasi...");
 
+  let seq = 1;
+
   setInterval(() => {
     mockTanks.forEach((tank) => {
       // Simulasi fluktuasi level air
@@ -54,14 +56,15 @@ client.on("connect", () => {
         tank.trend = 1;
       }
 
-      const volumeLiters = Math.round((tank.level_percent / 100) * tank.capacity_liters);
+      // Konversi level persen simulasi ke distance_cm (asumsi rentang 30cm - 350cm)
+      const distance_cm = parseFloat((350 - (tank.level_percent / 100) * (350 - 30)).toFixed(1));
+
       const payload = {
         tank_id: tank.tank_id,
         sensor_node_id: tank.sensor_node_id,
-        level_percent: parseFloat(tank.level_percent.toFixed(1)),
-        volume_liters: volumeLiters,
-        raw_value: Math.round(800 + Math.random() * 50),
+        distance_cm,
         rssi: Math.round(-65 - Math.random() * 15),
+        sequence: seq++,
         timestamp: new Date().toISOString(),
       };
 
@@ -69,7 +72,7 @@ client.on("connect", () => {
       client.publish(topic, JSON.stringify(payload), { qos: 0 });
 
       console.log(
-        `[Simulator] Publish ${topic}: ${payload.level_percent}% (${payload.volume_liters}L)`
+        `[Simulator] Publish ${topic}: distance=${payload.distance_cm}cm, rssi=${payload.rssi}dBm`
       );
     });
   }, 3000);

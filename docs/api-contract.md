@@ -47,6 +47,10 @@ Model data ini diturunkan langsung dari skema database PostgreSQL dan payload se
 | `capacityLiters` | `string(numeric)` | Tidak | Kapasitas maksimal tangki dalam liter (contoh: `"10000.00"`) |
 | `minThresholdPercent` | `string(numeric)` | Tidak | Batas bawah level air bahaya/CRITICAL (default: `"30.00"`) |
 | `maxThresholdPercent` | `string(numeric)` | Tidak | Batas atas level air maksimal (default: `"90.00"`) |
+| `minDistanceCm` | `string(numeric)` | Tidak | Jarak sensor ke permukaan air saat tangki 100% penuh (default: `"30.00"`) |
+| `maxDistanceCm` | `string(numeric)` | Tidak | Jarak sensor ke dasar tangki saat tangki 0% kosong (default: `"350.00"`) |
+| `latitude` | `string(numeric)` | Ya | Koordinat lintang GPS (contoh: `"-7.7428450"`) |
+| `longitude` | `string(numeric)` | Ya | Koordinat bujur GPS (contoh: `"110.3511200"`) |
 | `createdAt` | `string(ISO8601)` | Tidak | Tanggal pendaftaran tangki |
 | `updatedAt` | `string(ISO8601)` | Tidak | Tanggal pembaruan konfigurasi tangki |
 
@@ -56,10 +60,10 @@ Model data ini diturunkan langsung dari skema database PostgreSQL dan payload se
 | `id` | `number` (bigserial) | Tidak | ID log pembacaan |
 | `tankId` | `UUID` (string) | Tidak | ID tangki yang diukur |
 | `sensorNodeId` | `UUID` (string) | Ya | ID node sensor STM32 yang membaca |
-| `levelPercent` | `string(numeric)` | Tidak | Persentase ketinggian air saat ini (0.00 - 100.00 %) |
-| `volumeLiters` | `string(numeric)` | Tidak | Estimasi volume air tersisa dalam liter |
-| `rawValue` | `string(numeric)` | Ya | Nilai mentah sensor ultrasonik/jarak |
-| `rssi` | `number` | Ya | Kekuatan sinyal radio LoRa dalam satuan dBm (contoh: `-78`) |
+| `levelPercent` | `string(numeric)` | Tidak | Persentase ketinggian air hasil kalkulasi backend (0.00 - 100.00 %) |
+| `volumeLiters` | `string(numeric)` | Tidak | Estimasi volume air tersisa dalam liter hasil kalkulasi backend |
+| `rawValue` | `string(numeric)` | Ya | Nilai jarak fisik pantulan sensor ultrasonik ke air (`distance_cm`) |
+| `rssi` | `number` | Ya | Kekuatan sinyal radio LoRa dalam satuan dBm (contoh: `-68`) |
 | `recordedAt` | `string(ISO8601)` | Tidak | Timestamp waktu pengukuran sensor |
 
 ### 2.3 Entitas Peringatan (`Alert`)
@@ -222,6 +226,8 @@ Mengambil data detail sebuah tangki, beserta **50 pembacaan terakhir** dan **10 
     "capacityLiters": "10000.00",
     "minThresholdPercent": "30.00",
     "maxThresholdPercent": "90.00",
+    "minDistanceCm": "30.00",
+    "maxDistanceCm": "350.00",
     "createdAt": "2026-09-14T06:02:15.123Z",
     "updatedAt": "2026-09-14T06:02:15.123Z",
     "recentReadings": [
@@ -367,7 +373,9 @@ Digunakan pada form modal tambah tangki di menu pengaturan/manajemen.
   "location": "Gedung Lab Terpadu Lantai 4",
   "capacityLiters": 6000,
   "minThresholdPercent": 30,
-  "maxThresholdPercent": 90
+  "maxThresholdPercent": 90,
+  "minDistanceCm": 30,
+  "maxDistanceCm": 350
 }
 ```
 * **Validation Rules:**
@@ -376,6 +384,8 @@ Digunakan pada form modal tambah tangki di menu pengaturan/manajemen.
   * `capacityLiters`: number positif *(Wajib)*
   * `minThresholdPercent`: number, 0 - 100 *(Opsional, default 30)*
   * `maxThresholdPercent`: number, 0 - 100 *(Opsional, default 90)*
+  * `minDistanceCm`: number non-negatif, jarak saat 100% penuh *(Opsional, default 30)*
+  * `maxDistanceCm`: number positif, jarak saat 0% kosong *(Opsional, default 350)*
 * **Respons Berhasil (201 Created):**
 ```json
 {
@@ -387,6 +397,8 @@ Digunakan pada form modal tambah tangki di menu pengaturan/manajemen.
     "capacityLiters": "6000.00",
     "minThresholdPercent": "30.00",
     "maxThresholdPercent": "90.00",
+    "minDistanceCm": "30.00",
+    "maxDistanceCm": "350.00",
     "createdAt": "2026-09-19T05:40:00.000Z",
     "updatedAt": "2026-09-19T05:40:00.000Z"
   }
@@ -419,7 +431,9 @@ Digunakan untuk mengedit data tangki atau menyetel ulang batas peringatan kritis
   "name": "Tangki Atap Gedung Utama (Revisi)",
   "capacityLiters": 12000,
   "minThresholdPercent": 25,
-  "maxThresholdPercent": 95
+  "maxThresholdPercent": 95,
+  "minDistanceCm": 28,
+  "maxDistanceCm": 360
 }
 ```
 * **Respons Berhasil (200 OK):**
@@ -433,6 +447,8 @@ Digunakan untuk mengedit data tangki atau menyetel ulang batas peringatan kritis
     "capacityLiters": "12000.00",
     "minThresholdPercent": "25.00",
     "maxThresholdPercent": "95.00",
+    "minDistanceCm": "28.00",
+    "maxDistanceCm": "360.00",
     "createdAt": "2026-09-14T06:02:15.123Z",
     "updatedAt": "2026-09-19T05:42:00.000Z"
   }
@@ -588,7 +604,9 @@ Dipanggil oleh Raspberry Pi saat proses booting untuk mengambil peta relasi selu
       "sensorNodeId": "6b464034-79f0-46fe-a7e4-7bd3b7fa9c8a",
       "tankId": "a6f5ade5-777c-4871-a584-de40d11df30d",
       "tankName": "Tangki Atap Gedung Utama",
-      "capacityLiters": "10000.00"
+      "capacityLiters": "10000.00",
+      "minDistanceCm": "30.00",
+      "maxDistanceCm": "350.00"
     }
   ]
 }
@@ -851,40 +869,47 @@ Mengekspor rekapitulasi histori peringatan/anomali air untuk kebutuhan audit ber
 
 ## 4. Spesifikasi Kontrak WebSocket Realtime
 
-Frontend web dan mobile menghubungkan WebSocket sekali saat aplikasi dibuka ke:
-`ws://localhost:8000/ws`
+Frontend web dan mobile menghubungkan WebSocket saat aplikasi dibuka ke:
+* Development: `ws://localhost:8000/ws?token=<token_jwt>`
+* Production / Tailscale Tunnel: `wss://<domain-host>/ws?token=<token_jwt>`
+
+> **Keamanan & Validasi Origin:** Koneksi WebSocket mewajibkan parameter `?token=<jwt>` yang sah (diperoleh saat login via `/api/auth/login`). Klien tanpa token atau dari origin yang tidak terdaftar akan ditutup otomatis dengan status code `1008 Policy Violation`.
 
 ### 4.1 Pesan Sambutan Awal (`CONNECTED`)
-Diterima segera setelah handshake WebSocket berhasil:
+Diterima segera setelah handshake WebSocket dan verifikasi token JWT berhasil:
 ```json
 {
   "type": "CONNECTED",
   "message": "Terhubung ke stream realtime monitoring tangki",
-  "timestamp": "2026-09-19T05:45:00.123Z"
+  "user": "admin",
+  "timestamp": "2026-11-16T08:50:00.000Z"
 }
 ```
 
 ### 4.2 Pembaruan Ketinggian Air Realtime (`LEVEL_UPDATE`)
-Dipancarkan setiap kali sensor STM32 mengirimkan data terbaru melalui LoRa/MQTT:
+Dipancarkan setiap kali sensor STM32 mengirimkan data terbaru melalui LoRa/MQTT dan diolah oleh backend:
 ```json
 {
   "type": "LEVEL_UPDATE",
-  "timestamp": "2026-09-19T05:45:05.000Z",
+  "timestamp": "2026-11-16T08:50:05.125Z",
   "data": {
     "tank_id": "e0a7e584-6091-4560-b6aa-cf4a852875a1",
     "sensor_node_id": "f12e873b-7412-4211-9a72-b2a1e054231b",
-    "level_percent": 72.8,
-    "volume_liters": 7280,
-    "raw_value": 815,
-    "rssi": -77,
-    "timestamp": "2026-09-19T05:45:05.000Z"
+    "level_percent": 74.25,
+    "volume_liters": 7425.00,
+    "distance_cm": 112.4,
+    "raw_value": 112.4,
+    "rssi": -68,
+    "sequence": 172,
+    "is_buffered": false,
+    "timestamp": "2026-11-16T08:50:05.120Z"
   }
 }
 ```
-*Tindakan Frontend:* Perbarui nilai persentase, meteran air animasi (*liquid gauge*), dan titik terbaru pada grafik tanpa perlu reload.
+*Tindakan Frontend:* Perbarui nilai persentase, meteran air animasi (*liquid gauge*), kapasitas volume liter, indikator sinyal LoRa (`rssi`), dan titik terbaru pada grafik tanpa perlu reload.
 
 ### 4.3 Peringatan Bahaya Baru Muncul (`ALERT_TRIGGERED`)
-Dipancarkan saat Warning Engine mendeteksi level air masuk ke ambang `WARNING` (30%–60%) atau `CRITICAL` (<30%):
+Dipancarkan saat Warning Engine mendeteksi level air masuk ke ambang `WARNING` (30%-60%) atau `CRITICAL` (<30%):
 ```json
 {
   "type": "ALERT_TRIGGERED",

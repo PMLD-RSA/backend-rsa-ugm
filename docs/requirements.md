@@ -34,12 +34,15 @@ Backend bertanggung jawab pada **inti pemrosesan data**: menerima data dari gate
 ## 2. Kebutuhan Sistem (Requirements)
 
 ### Functional
-- Menerima data level air per tangki secara berkala dari gateway via MQTT.
-- Menyimpan data mentah (raw) dan data hasil olahan (level %, volume liter) beserta timestamp.
-- **Warning Engine**: Mendeteksi kondisi WARNING (30–60%) dan CRITICAL (<30%), lalu secara otomatis membuat atau menutup (resolve) entri alert.
+- Menerima data telemetri jarak fisik sensor ultrasonik (`distance_cm`) dari gateway via MQTT.
+- Menghitung persentase ketinggian air (`level_percent`) dan estimasi volume air (`volume_liters`) secara terpusat di backend menggunakan konfigurasi kalibrasi tangki (`min_distance_cm`, `max_distance_cm`, `capacity_liters`).
+- Menyimpan data mentah jarak dan data hasil olahan (level %, volume liter) beserta timestamp ke database.
+- Melakukan deduplikasi paket LoRa mesh berdasarkan `sequence` transmisi untuk mencegah pencatatan berulang.
+- Mengabaikan aktivasi alarm darurat pada data tertunda (*stale buffered data*, `is_buffered: true` dengan umur > 5 menit) untuk mencegah banjir notifikasi usang.
+- **Warning Engine**: Mendeteksi kondisi WARNING (30-60%) dan CRITICAL (<30%), lalu secara otomatis membuat atau menutup (resolve) entri alert.
 - Mencatat **audit log** untuk aksi pengguna di sistem (login, perubahan konfigurasi threshold tangki, dsb).
 - Menyediakan **REST API** untuk query data tangki, riwayat histori pembacaan (grafik 24 jam dengan agregasi), daftar alert aktif/histori, dan data gateway.
-- Menyediakan **realtime channel** (WebSocket) untuk mendorong pembaruan level air dan notifikasi alert baru secara instan ke dashboard.
+- Menyediakan **realtime channel** (WebSocket terotentikasi JWT) untuk mendorong pembaruan level air dan notifikasi alert baru secara instan ke dashboard.
 - Mendeteksi status koneksi node/gateway (online/offline) berdasarkan interval heartbeat dan pesan last seen.
 
 ### Non-Functional
@@ -121,26 +124,28 @@ Komunikasi dengan Gateway & Broker menggunakan protokol **MQTT**:
 | `hospital/{tank_id}/heartbeat` | Gateway → Backend | 0 | Keep-alive berkala per node / gateway |
 
 ### Contoh Payload (`level`)
+Gateway Raspberry Pi memublikasikan data fisik pengukuran jarak sensor secara efisien tanpa redundansi:
 ```json
 {
-  "tank_id": "TANK-A",
-  "sensor_node_id": "STM32-A01",
-  "level_percent": 72.4,
-  "volume_liters": 1450,
-  "raw_value": 812,
-  "rssi": -78,
-  "timestamp": "2026-09-14T10:25:00Z"
+  "tank_id": "f5d31c46-1ae8-4838-ba0e-4eb5c8705831",
+  "sensor_node_id": "a513b2b5-0c97-4dab-baf6-2b6d57aa4944",
+  "distance_cm": 112.4,
+  "rssi": -68,
+  "sequence": 171,
+  "is_buffered": false,
+  "timestamp": "2026-11-16T08:50:00.120Z"
 }
 ```
+*Catatan:* Field `level_percent` dan `volume_liters` ditiadakan dari payload Raspberry Pi untuk menghindari redundansi data dan duplikasi kalkulasi di sisi perangkat keras tepi (*edge*). Backend secara otomatis menghitung nilai tersebut berdasarkan parameter kalibrasi tangki.
 
 ### Contoh Payload (`status`)
 ```json
 {
-  "tank_id": "TANK-A",
-  "sensor_node_id": "STM32-A01",
+  "tank_id": "f5d31c46-1ae8-4838-ba0e-4eb5c8705831",
+  "sensor_node_id": "a513b2b5-0c97-4dab-baf6-2b6d57aa4944",
   "status": "online",
   "battery_level": 94,
-  "timestamp": "2026-09-14T10:25:00Z"
+  "timestamp": "2026-11-16T08:50:00.120Z"
 }
 ```
 
@@ -148,30 +153,35 @@ Komunikasi dengan Gateway & Broker menggunakan protokol **MQTT**:
 
 ## 6. Alur Data (End-to-End)
 
-1. STM32 di masing-masing tangki membaca sensor ketinggian air secara periodik.
-2. Data dikirimkan via modul radio **LoRa** ke satu unit Raspberry Pi (gateway pusat).
-3. Raspberry Pi mem-publish pesan data ke **MQTT broker** sesuai topic `hospital/{tank_id}/...`.
-4. **MQTT Subscriber Service** menerima pesan, memvalidasi integritas data dengan **Zod**, lalu:
+1. Sensor ultrasonik DYP-A01 pada modul STM32 membaca jarak pantulan ke permukaan air (dalam satuan milimeter).
+2. Data dikirimkan via modul radio **LoRa E220** (dengan mekanisme anti-tabrakan dan relay mesh) ke unit Raspberry Pi.
+3. Raspberry Pi mengonversi jarak ke satuan centimeter (`distance_cm`) lalu mem-publish pesan ke **MQTT broker** pada topik `hospital/{tank_id}/level`.
+4. **MQTT Subscriber Service** menerima pesan dan:
+   - Memvalidasi integritas data dengan **Zod** (`mqttLevelPayloadSchema`).
+   - Melakukan filter duplikasi paket LoRa mesh berdasarkan `sequence` transmisi.
+   - Mengambil konfigurasi kalibrasi tangki (`min_distance_cm`, `max_distance_cm`, `capacity_liters`) melalui cache `TankCalculatorService`.
+   - Mengalkulasi persentase level air (`level_percent`) dan volume liter (`volume_liters`) secara presisi.
    - Memasukkan data ke buffer **Redis Streams**.
-   - Meneruskan data ke **Warning Engine** untuk evaluasi threshold secara realtime.
-5. **Batch Writer** membaca data dari Redis Streams secara berkala/berkelompok (batch), lalu menginsert ke tabel time-series **PostgreSQL/TimescaleDB**.
-6. Jika level air masuk ke rentang WARNING (30–60%) atau CRITICAL (<30%), Warning Engine otomatis mencatat record di tabel `alerts` dan memicu **WebSocket Broadcaster**.
-7. Jika level air kembali normal, alert yang aktif otomatis ditandai sebagai `resolved`.
-8. **WebSocket Broadcaster** mendorong pembaruan level air dan notifikasi alert terbaru ke web Next.js & aplikasi mobile React Native.
-9. Dashboard memanggil **REST API** Fastify untuk menampilkan grafik historis 24 jam, master data tangki, status node sensor, dan riwayat alert.
+   - Meneruskan data ke **Warning Engine** untuk evaluasi threshold (dengan pengecekan umur data buffer).
+   - Menyiarkan event `LEVEL_UPDATE` secara langsung via **WebSocket Broadcaster**.
+5. **Batch Writer** membaca data dari Redis Streams secara periodik (setiap 3 detik), lalu menyimpan ke tabel time-series **PostgreSQL/TimescaleDB** (`water_level_readings`).
+6. Jika level air masuk ke rentang WARNING (30-60%) atau CRITICAL (<30%), Warning Engine otomatis mencatat record di tabel `alerts` dan menyiarkan event `ALERT_TRIGGERED`.
+7. Jika level air kembali normal (>60%), alert yang aktif otomatis ditandai sebagai `resolved` dan disiarkan via event `ALERT_RESOLVED`.
+8. Dashboard web dan mobile menangkap data realtime melalui WebSocket tanpa perlu me-reload halaman.
+9. Dashboard memanggil **REST API** Fastify untuk menampilkan grafik historis 24 jam, master data tangki, status node sensor, dan laporan CSV.
 
 ---
 
 ## 7. Skema Database (PostgreSQL & TimescaleDB)
 
 ### Entitas Utama (7 Core Tables)
-- **tanks** — Master data tangki (nama, kapasitas, lokasi, batas threshold peringatan).
-- **gateways** — Data unit Raspberry Pi perantara LoRa ke MQTT.
-- **sensor_nodes** — Data modul node STM32 per tangki.
-- **water_level_readings** — Data time-series hasil pembacaan sensor (hypertable TimescaleDB).
-- **alerts** — Riwayat peringatan WARNING/CRITICAL beserta status penanganannya.
-- **users** — Akun operator dan administrator sistem.
-- **audit_logs** — Riwayat jejak audit aktivitas pengguna dan sistem.
+- **tanks**: Master data tangki (nama, kapasitas, lokasi, batas threshold peringatan).
+- **gateways**: Data unit Raspberry Pi perantara LoRa ke MQTT.
+- **sensor_nodes**: Data modul node STM32 per tangki.
+- **water_level_readings**: Data time-series hasil pembacaan sensor (hypertable TimescaleDB).
+- **alerts**: Riwayat peringatan WARNING/CRITICAL beserta status penanganannya.
+- **users**: Akun operator dan administrator sistem.
+- **audit_logs**: Riwayat jejak audit aktivitas pengguna dan sistem.
 
 ### ERD (Mermaid)
 
@@ -191,6 +201,10 @@ erDiagram
         numeric capacity_liters
         numeric min_threshold_percent
         numeric max_threshold_percent
+        numeric min_distance_cm
+        numeric max_distance_cm
+        numeric latitude
+        numeric longitude
         timestamptz created_at
         timestamptz updated_at
     }
@@ -335,10 +349,10 @@ sequenceDiagram
     API-->>RPI: JSON Dictionary Mapping (disimpan di RAM/file lokal)
 
     Note over STM,DB: Fase 2: Pengiriman Telemetri Berulang (LoRa -> MQTT)
-    STM->>RPI: LoRa Packet: { node_code: "STM32-ATA", raw_val: 820, level: 78.5 }
-    RPI->>RPI: Cocokkan node_code dengan Mapping -> dapatkan tank_id UUID
-    RPI->>BRK: MQTT Publish: hospital/{tank_id}/level { tank_id, sensor_node_id, level_percent, ... }
-    BRK->>API: MQTT Subscriber menerima pesan
+    STM->>RPI: LoRa Packet: { node_code: "STM32-ATA", distance_mm: 1124, seq: 171 }
+    RPI->>RPI: Konversi ke distance_cm (112.4) & Cocokkan node_code -> tank_id
+    RPI->>BRK: MQTT Publish: hospital/{tank_id}/level { tank_id, sensor_node_id, distance_cm, rssi, seq, ... }
+    BRK->>API: MQTT Subscriber menerima pesan & menghitung level% & volume
     API->>DB: Buffer ke Redis Streams & Evaluasi Warning Engine
     API-->>DB: Batch Writer menyimpan ke TimescaleDB
 ```
@@ -357,22 +371,26 @@ Terdapat 2 mekanisme integrasi yang didukung secara *hybrid*:
    ```json
    {
      "success": true,
-     "gateway_code": "GW-HUB-01",
-     "synced_at": "2026-09-24T15:30:00Z",
+     "gatewayCode": "GW-HUB-01",
+     "syncedAt": "2026-11-16T15:30:00Z",
      "mappings": [
        {
-         "device_code": "STM32-ATA",
-         "sensor_node_id": "6b464034-79f0-46fe-a7e4-7bd3b7fa9c8a",
-         "tank_id": "a6f5ade5-777c-4871-a584-de40d11df30d",
-         "tank_name": "Tangki Atap Gedung Utama",
-         "capacity_liters": 10000
+         "deviceCode": "STM32-ATA",
+         "sensorNodeId": "6b464034-79f0-46fe-a7e4-7bd3b7fa9c8a",
+         "tankId": "a6f5ade5-777c-4871-a584-de40d11df30d",
+         "tankName": "Tangki Atap Gedung Utama",
+         "capacityLiters": "10000.00",
+         "minDistanceCm": "30.00",
+         "maxDistanceCm": "350.00"
        },
        {
-         "device_code": "STM32-GED",
-         "sensor_node_id": "ec120989-a026-4935-bded-fae8885b2106",
-         "tank_id": "fffce8f9-04e2-4f9e-9302-fd2e1c6d1825",
-         "tank_name": "Tangki Gedung Rawat Inap",
-         "capacity_liters": 8000
+         "deviceCode": "STM32-GED",
+         "sensorNodeId": "ec120989-a026-4935-bded-fae8885b2106",
+         "tankId": "fffce8f9-04e2-4f9e-9302-fd2e1c6d1825",
+         "tankName": "Tangki Gedung Rawat Inap",
+         "capacityLiters": "8000.00",
+         "minDistanceCm": "25.00",
+         "maxDistanceCm": "320.00"
        }
      ]
    }

@@ -934,6 +934,12 @@ components:
         maxThresholdPercent:
           type: string
           example: "90.00"
+        minDistanceCm:
+          type: string
+          example: "30.00"
+        maxDistanceCm:
+          type: string
+          example: "350.00"
         latitude:
           type: string
           nullable: true
@@ -975,6 +981,14 @@ components:
           type: number
           default: 90
           example: 90
+        minDistanceCm:
+          type: number
+          default: 30
+          example: 30
+        maxDistanceCm:
+          type: number
+          default: 350
+          example: 350
         latitude:
           type: number
           nullable: true
@@ -996,6 +1010,10 @@ components:
         minThresholdPercent:
           type: number
         maxThresholdPercent:
+          type: number
+        minDistanceCm:
+          type: number
+        maxDistanceCm:
           type: number
         latitude:
           type: number
@@ -1142,6 +1160,12 @@ components:
               capacityLiters:
                 type: string
                 example: "10000.00"
+              minDistanceCm:
+                type: string
+                example: "30.00"
+              maxDistanceCm:
+                type: string
+                example: "350.00"
 
     SensorNode:
       type: object

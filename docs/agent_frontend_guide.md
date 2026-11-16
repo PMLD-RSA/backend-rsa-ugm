@@ -1,366 +1,275 @@
-# Panduan Transisi Frontend: Migrasi Data Mock ke REST API dan Realtime WebSocket
+# Panduan Audit & Integrasi Frontend: Backend Water Tank Monitoring System
 
-Dokumen ini disusun khusus sebagai instruksi langkah demi langkah bagi agen pengembang (*AI coding agent*) yang bertugas menyambungkan antarmuka dan komponen UI frontend yang sudah ada ke backend Fastify dan Realtime WebSocket RSA UGM, menggantikan seluruh data tiruan (*dummy/mock*).
-
----
-
-## 1. Konfigurasi Lingkungan (Environment Variables)
-
-Komponen frontend harus menggunakan variabel lingkungan untuk mengarahkan koneksi ke host backend (Tailscale tunnel).
-
-Buat atau perbarui berkas `.env.local` (atau `.env`) di proyek frontend:
-
-```env
-# Jika menggunakan Tailscale Funnel / domain HTTPS:
-NEXT_PUBLIC_API_URL=https://<domain-tunnel-anda>
-NEXT_PUBLIC_WS_URL=wss://<domain-tunnel-anda>/ws
-
-# Atau jika menggunakan IP privat Tailscale / HTTP biasa:
-# NEXT_PUBLIC_API_URL=http://100.94.192.102:8000
-# NEXT_PUBLIC_WS_URL=ws://100.94.192.102:8000/ws
-```
-
-Helper inisialisasi URL di sisi frontend:
-```typescript
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.VITE_API_URL || "http://100.94.192.102:8000";
-const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_URL || process.env.VITE_WS_URL || "ws://100.94.192.102:8000/ws";
-```
+Dokumen ini adalah instruksi operasional dan protokol verifikasi (Agent Skill) bagi AI Agent pengembang frontend. Gunakan panduan ini untuk mengaudit repositori frontend, membedah implementasi integrasi yang ada, mendeteksi bug atau data yang hilang/salah, serta menyusun rencana perbaikan (remediation plan) terstruktur bagi pengembang.
 
 ---
 
-## 2. Otentikasi dan Token Interceptor
+## 1. Peran & Alur Kerja Agent (Agent Operating Protocol)
 
-Hampir seluruh endpoint data backend dilindungi oleh autentikasi JWT Bearer. Jika frontend memanggil API tanpa token, server akan mengembalikan status `401 Unauthorized`.
+Saat ditugaskan memeriksa atau memperbaiki integrasi frontend terhadap backend, Agent wajib menjalankan prosedur berikut secara berurutan:
 
-### A. Alur Login Otomatis / Manual
-Panggil endpoint otentikasi untuk mendapatkan token JWT:
-* **Metode**: `POST`
-* **Path**: `/api/auth/login`
-* **Body Request**:
-  ```json
-  {
-    "username": "admin",
-    "password": "admin123"
-  }
-  ```
-* **Respon Sukses**: Ambil string token dari `response.data.token`.
-* **Penyimpanan**: Simpan di `localStorage.setItem("token", token)` atau `sessionStorage`.
-
-### B. Helper Fetch Terpusat dengan Interceptor
-Agen harus membungkus seluruh pemanggilan API menggunakan helper berikut agar token otomatis terpasang:
-
-```typescript
-export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  const headers = new Headers(options.headers || {});
-
-  if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-  }
-  if (token && !headers.has("Authorization")) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
-  const url = `${API_BASE_URL.replace(/\/$/, "")}${endpoint}`;
-  const response = await fetch(url, { ...options, headers });
-
-  if (response.status === 401) {
-    // Tangani token kedaluwarsa: arahkan ke halaman login atau lakukan refresh token
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("app:unauthorized"));
-    }
-    throw new Error("Sesi berakhir. Silakan login kembali.");
-  }
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.message || `HTTP ${response.status}: ${response.statusText}`);
-  }
-
-  const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("text/csv")) {
-    return (await response.text()) as unknown as T;
-  }
-
-  return response.json();
-}
-```
+1. **Audit Konfigurasi Jaringan & Environment**:
+   * Periksa apakah URL backend mengarah ke endpoint yang valid (Tailscale Funnel HTTPS vs IP privat HTTP).
+   * Pastikan pemisahan protokol: HTTP/HTTPS untuk REST API dan WS/WSS untuk WebSocket.
+2. **Audit Otentikasi & Penyimpanan Token**:
+   * Periksa apakah token JWT diperoleh dari alur login resmi dan disimpan secara konsisten.
+   * Pastikan seluruh panggilan REST API menyertakan header otentikasi.
+   * Pastikan koneksi WebSocket menyertakan token pada parameter query URL (bukan header).
+3. **Audit Keselarasan Skema Data (Data Contract Verification)**:
+   * Bandingkan tipe data di state frontend dengan tipe data riil dari database/REST API (waspadai string desimal).
+   * Verifikasi konsistensi konvensi penamaan: REST API menggunakan `camelCase`, sedangkan payload WebSocket/MQTT menggunakan `snake_case`.
+4. **Audit Siklus Hidup Realtime WebSocket**:
+   * Verifikasi penanganan event `LEVEL_UPDATE`, `ALERT_TRIGGERED`, dan `ALERT_RESOLVED`.
+   * Pastikan ada mekanisme auto-reconnect dengan jeda (backoff) dan pembersihan koneksi (cleanup).
+5. **Pemeriksaan Komponen Fungsional**:
+   * Cek komponen kartu tangki, grafik time-series, tabel alert, pin peta koordinat, dan unduhan file CSV.
+6. **Penyusunan Laporan & Rencana Perbaikan (Remediation Plan)**:
+   * Sajikan temuan masalah, berkas yang terdampak, akar penyebab, serta langkah perbaikan yang tepat tanpa mengubah logika bisnis inti.
 
 ---
 
-## 3. Matriks Transformasi Data (Mock Field vs Backend Field)
+## 2. Verifikasi Konfigurasi Lingkungan (Environment Variables)
 
-Saat mengganti data mock di komponen UI, perhatikan perbedaan nama properti antara data tiruan dengan skema riil dari basis data backend:
+Agent harus memeriksa berkas konfigurasi lingkungan frontend (`.env`, `.env.local`, atau variabel build):
 
-| Data Komponen | Field Umum di Mock Data | Field Riil dari Backend API | Tipe Data Riil | Keterangan Transformasi |
+### Aturan Protokol Jaringan:
+* **Mode Produksi / Tunnel (HTTPS & WSS)**:
+  * Jika frontend diakses melalui domain HTTPS (misal Tailscale Funnel), URL API **wajib** menggunakan `https://` dan WebSocket **wajib** menggunakan `wss://`.
+  * Pencampuran protokol (Mixed Content: halaman HTTPS memanggil API `http://` atau `ws://`) akan diblokir otomatis oleh browser.
+* **Mode Pengembangan Lokal (HTTP & WS)**:
+  * Menggunakan `http://` untuk REST API (port default `8000`) dan `ws://` untuk WebSocket (`/ws`).
+* **Variabel Standar**:
+  * `NEXT_PUBLIC_API_URL` atau `VITE_API_URL`: Base URL tanpa trailing slash (contoh: `https://ubuntu-luis.tail7e12bf.ts.net` atau `http://100.94.192.102:8000`).
+  * `NEXT_PUBLIC_WS_URL` atau `VITE_WS_URL`: URL endpoint socket lengkap (contoh: `wss://ubuntu-luis.tail7e12bf.ts.net/ws` atau `ws://100.94.192.102:8000/ws`).
+
+---
+
+## 3. Protokol Verifikasi Otentikasi & Interceptor
+
+### A. Alur Login & Penyimpanan Kredensial
+* **Endpoint Login**: `POST /api/auth/login`
+* **Payload Request**: JSON `{ "username": "<string>", "password": "<string>" }`
+* **Response Sukses**: JSON `{ "success": true, "data": { "token": "<jwt_string>", "user": { "id": "<uuid>", "username": "<string>", "role": "admin" | "operator" } } }`
+* **Lokasi Token**: String token berada di path `data.token`.
+* **Poin Audit Agent**:
+  * Pastikan token disimpan di media persisten yang aman (`localStorage` atau `sessionStorage`).
+  * Jangan menyimpan objek user sebagai pengganti string token.
+
+### B. Header Otentikasi HTTP (REST API)
+* Seluruh endpoint selain `/api/auth/login`, `/health`, dan `/api/gateways/:deviceCode/sync` mewajibkan header:
+  `Authorization: Bearer <token>`
+* Header request wajib menyertakan `Content-Type: application/json` kecuali untuk endpoint ekspor file.
+* **Poin Audit Agent**:
+  * Periksa apakah interceptor (Axios, Fetch Wrapper, atau Query Client) menangani error HTTP `401 Unauthorized`.
+  * Saat error 401 terjadi, frontend harus membersihkan token kadaluwarsa dan mengarahkan navigasi ke rute login.
+
+### C. Otentikasi WebSocket
+* Browser API standar (`new WebSocket()`) tidak mendukung penambahan custom HTTP Header.
+* Backend Fastify mengotentikasi koneksi WebSocket melalui **Query Parameter URL**:
+  Format: `<WS_BASE_URL>?token=<token_jwt>`
+* Jika token tidak disertakan atau sudah kadaluwarsa, server langsung menolak koneksi dengan status penutupan **WebSocket Close Code 1008 (Policy Violation)**.
+* **Poin Audit Agent**:
+  * Pastikan URL koneksi WebSocket selalu ditempeli query parameter `?token=...`.
+  * Pastikan token di-encode secara aman (`encodeURIComponent(token)`).
+
+---
+
+## 4. Matriks Transformasi Data & Type Safety (Backend vs Frontend)
+
+Penyebab bug paling umum pada frontend adalah perbedaan tipe data antara basis data PostgreSQL/Drizzle dengan tipe data di JavaScript/TypeScript.
+
+### Aturan Kritis Tipe Data PostgreSQL:
+Kolom bertipe `NUMERIC` atau `DECIMAL` pada PostgreSQL dikembalikan oleh backend sebagai **string desimal** (bukan number float/integer) untuk menjaga presisi angka. Frontend **wajib** melakukan konversi eksplisit menggunakan `parseFloat()` atau `Number()`.
+
+### Tabel Audit Pemetaan Properti:
+
+| Entitas Data | Properti Backend REST API | Tipe Data Asli Backend | Tipe Data yang Diharapkan Frontend | Keterangan & Aturan Transformasi |
 |---|---|---|---|---|
-| ID Tangki | `id` / `tankId` | `tank.id` | UUID string | Format UUID v4 standar |
-| Nama Tangki | `name` / `title` | `tank.name` | string | Contoh: "Tangki Atap Gedung Utama" |
-| Lokasi Tangki | `location` | `tank.location` | string / null | Contoh: "Atap Gedung A, Lantai 5" |
-| Kapasitas Tangki | `capacity` | `tank.capacityLiters` | string desimal | Gunakan `parseFloat(tank.capacityLiters)` |
-| Ambang Batas Min | `minThreshold` | `tank.minThresholdPercent` | string desimal | Default "30.00", ubah ke `Number()` |
-| Ambang Batas Max | `maxThreshold` | `tank.maxThresholdPercent` | string desimal | Default "90.00", ubah ke `Number()` |
-| Koordinat Lintang | `lat` / `latitude` | `tank.latitude` | string / null | Contoh: "-7.7428450" (Gedung Utama) |
-| Koordinat Bujur | `lng` / `longitude` | `tank.longitude` | string / null | Contoh: "110.3511200" |
-| Level Air Saat Ini | `currentLevel` / `level` | `tank.latestReading.levelPercent` | string / number | Nilai persentase 0.00 sampai 100.00 |
-| Volume Air Saat Ini | `currentVolume` / `volume`| `tank.latestReading.volumeLiters` | string / number | Nilai volume dalam liter |
-| Waktu Pembacaan | `updatedAt` / `time` | `tank.latestReading.recordedAt` | string ISO UTC | Format waktu standar ISO 8601 |
-| Status Peringatan | `status` / `alert` | `tank.activeAlert.level` | "CRITICAL" / "WARNING" / null | Null jika kondisi air normal |
+| **Tangki** | `id` | String (UUID v4) | String | Identifier unik tangki |
+| Tangki | `name` | String | String | Nama tangki (contoh: "Tangki Gedung Utama") |
+| Tangki | `location` | String / Null | String | Lokasi fisik tangki |
+| Tangki | `capacityLiters` | String Desimal | Number | Konversi via `parseFloat(tank.capacityLiters)` |
+| Tangki | `minThresholdPercent` | String Desimal | Number | Default "30.00", batas bawah bahaya (CRITICAL) |
+| Tangki | `maxThresholdPercent` | String Desimal | Number | Default "90.00", batas atas peringatan |
+| Tangki | `minDistanceCm` | String Desimal | Number | Jarak sensor saat tangki 100% penuh (default "30.00") |
+| Tangki | `maxDistanceCm` | String Desimal | Number | Jarak sensor saat tangki 0% kosong (default "350.00") |
+| Tangki | `latitude` | String / Null | Number / Null | Parse ke float sebelum dioper ke peta: `parseFloat(tank.latitude)` |
+| Tangki | `longitude` | String / Null | Number / Null | Parse ke float sebelum dioper ke peta: `parseFloat(tank.longitude)` |
+| Tangki | `latestReading` | Objek / Null | Objek / Null | Null jika tangki belum pernah menerima telemetri sensor |
+| Tangki | `activeAlert` | Objek / Null | Objek / Null | Null jika level air normal; terisi jika status WARNING/CRITICAL |
+| **Pembacaan Air** | `levelPercent` | String Desimal / Number | Number | Persentase air (0.00 - 100.00) hasil kalkulasi backend |
+| Pembacaan Air | `volumeLiters` | String Desimal / Number | Number | Volume air dalam liter hasil kalkulasi backend |
+| Pembacaan Air | `rawValue` | String Desimal / Number | Number | Jarak fisik sensor ke air dalam centimeter (`distance_cm`) |
+| Pembacaan Air | `rssi` | Number / Null | Number / Null | Kekuatan sinyal LoRa dalam dBm (contoh: -68) |
+| Pembacaan Air | `recordedAt` | String (ISO 8601 UTC) | String / Date | Format waktu UTC (contoh: `2026-11-16T08:50:02.120Z`) |
+| **Peringatan** | `id` | Integer | Number | ID numerik alert |
+| Peringatan | `tankId` | String (UUID v4) | String | Relasi ke tangki terkait |
+| Peringatan | `level` | Enum String | "WARNING" \| "CRITICAL" | Tingkat keparahan bahaya |
+| Peringatan | `message` | String | String | Deskripsi peringatan dari Warning Engine |
+| Peringatan | `status` | Enum String | "active" \| "resolved" | Status penanganan alert |
+| Peringatan | `createdAt` | String (ISO 8601 UTC) | String / Date | Waktu alert tercatat pertama kali |
+| Peringatan | `resolvedAt` | String / Null | String / Null | Waktu alert diselesaikan (otomatis/manual) |
 
 ---
 
-## 4. Implementasi Penggantian Data per Komponen
+## 5. Protokol Verifikasi Realtime WebSocket
 
-### A. Komponen Daftar Tangki & Kartu Gauge Ketinggian Air
-Gantikan array mock tangki statis dengan pemanggilan API:
+### A. Format Pesan Masuk (Event Specs)
 
-* **Endpoint Awal**: `GET /api/tanks`
-* **Implementasi di Komponen**:
-  ```typescript
-  // SEBELUM:
-  // const [tanks, setTanks] = useState(MOCK_TANKS);
+Pesan dari server dikirim dalam format JSON dengan format envelope terstandarisasi:
 
-  // SESUDAH:
-  const [tanks, setTanks] = useState<Tank[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-
-  useEffect(() => {
-    async function loadTanks() {
-      try {
-        setLoading(true);
-        const res = await apiFetch<{ success: boolean; data: Tank[] }>("/api/tanks");
-        if (res.success) {
-          setTanks(res.data);
-        }
-      } catch (err) {
-        console.error("Gagal memuat tangki:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadTanks();
-  }, []);
-  ```
-
----
-
-### B. Implementasi Realtime WebSocket untuk Level Air Dinamis
-Komponen gauge atau kartu tangki tidak boleh bergantung pada polling REST API berulang. Sambungkan socket ke `/ws` dan dengarkan event `LEVEL_UPDATE`:
-
-* **Alamat WebSocket**: `ws://<host>:8000/ws?token=<token_jwt>` atau `wss://<host>/ws?token=<token_jwt>`
-* **Keamanan & Otentikasi**: Endpoint WebSocket mewajibkan parameter `?token=<jwt>` yang diperoleh saat login via `/api/auth/login`. Jika token tidak ada atau tidak valid, koneksi akan ditutup otomatis dengan status code 1008.
-* **Struktur Pesan Masuk**:
+#### 1. Event `LEVEL_UPDATE` (Pembaruan Level Air Berkala):
+* **Trigger**: Dipancarkan setiap kali backend menerima data telemetri valid dari sensor node melalui MQTT.
+* **Format Envelope**:
   ```json
   {
     "type": "LEVEL_UPDATE",
+    "timestamp": "2026-11-16T08:50:02.125Z",
     "data": {
       "tank_id": "0d8e0439-184e-4f91-b307-eb3c847d16a1",
-      "sensor_node_id": "b3e0c091-...",
-      "level_percent": 76.5,
-      "volume_liters": 7650.0,
-      "raw_value": 118.2,
-      "rssi": -65,
-      "timestamp": "2026-10-29T07:35:02.120Z"
-    },
-    "timestamp": "2026-10-29T07:35:02.125Z"
-  }
-  ```
-* **Logika Pembaruan State Komponen (Tanpa Me-reload Halaman)**:
-  ```typescript
-  useEffect(() => {
-    let ws: WebSocket | null = null;
-    let reconnectTimeout: any = null;
-
-    function connectSocket() {
-      const token = localStorage.getItem("auth_token") || "";
-      const wsUrl = `${WS_BASE_URL}${WS_BASE_URL.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
-      ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        console.log("[WebSocket] Terhubung ke server realtime");
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data);
-
-          // Update level tangki secara spesifik berdasarkan ID
-          if (payload.type === "LEVEL_UPDATE" && payload.data?.tank_id) {
-            const update = payload.data;
-            setTanks((prevTanks) =>
-              prevTanks.map((tank) => {
-                if (tank.id !== update.tank_id) return tank;
-
-                return {
-                  ...tank,
-                  latestReading: {
-                    id: Date.now(),
-                    tankId: update.tank_id,
-                    sensorNodeId: update.sensor_node_id,
-                    levelPercent: update.level_percent,
-                    volumeLiters: update.volume_liters,
-                    rawValue: update.raw_value,
-                    rssi: update.rssi,
-                    recordedAt: update.timestamp,
-                  },
-                };
-              })
-            );
-          }
-        } catch (e) {
-          console.warn("Gagal parse payload socket:", e);
-        }
-      };
-
-      ws.onclose = () => {
-        console.warn("[WebSocket] Putus. Menghubungkan ulang dalam 3 detik...");
-        reconnectTimeout = setTimeout(connectSocket, 3000);
-      };
-    }
-
-    connectSocket();
-
-    return () => {
-      if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      if (ws) ws.close();
-    };
-  }, []);
-  ```
-
----
-
-### C. Komponen Grafik Riwayat Telemetri (Time-Series Chart)
-Gantikan data array angka acak pada grafik dengan histori riil dari TimescaleDB:
-
-* **Endpoint**: `GET /api/tanks/:id/readings?hours=24&limit=100`
-* **Implementasi**:
-  ```typescript
-  async function loadChartData(tankId: string) {
-    const res = await apiFetch<{
-      success: boolean;
-      data: Array<{
-        id: number;
-        levelPercent: string | number;
-        volumeLiters: string | number;
-        recordedAt: string;
-      }>;
-    }>(`/api/tanks/${tankId}/readings?hours=24&limit=100`);
-
-    if (res.success) {
-      // Format data untuk Chart.js, Recharts, atau ApexCharts
-      // Urutkan data secara kronologis (dari waktu terlama ke terbaru)
-      const sorted = [...res.data].sort(
-        (a, b) => new Date(a.recordedAt).getTime() - new Date(b.recordedAt).getTime()
-      );
-
-      const labels = sorted.map((r) => {
-        const d = new Date(r.recordedAt);
-        return d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
-      });
-
-      const seriesLevel = sorted.map((r) => parseFloat(String(r.levelPercent)));
-      const seriesVolume = sorted.map((r) => parseFloat(String(r.volumeLiters)));
-
-      setChartState({ labels, seriesLevel, seriesVolume });
+      "sensor_node_id": "b3e0c091-7412-4211-9a72-b2a1e054231b",
+      "level_percent": 74.25,
+      "volume_liters": 7425.00,
+      "distance_cm": 112.4,
+      "raw_value": 112.4,
+      "rssi": -68,
+      "sequence": 172,
+      "is_buffered": false,
+      "timestamp": "2026-11-16T08:50:02.120Z"
     }
   }
   ```
+* **Poin Audit Agent**:
+  * Perhatikan bahwa payload data di dalam socket menggunakan **`snake_case`** (`tank_id`, `sensor_node_id`, `level_percent`, `volume_liters`, `distance_cm`, `raw_value`, `is_buffered`).
+  * Jika frontend memetakan properti ini ke state `latestReading`, properti harus diselaraskan ke format state yang digunakan komponen (`tankId`, `levelPercent`, `volumeLiters`, `rawValue`, dll).
+  * Data `level_percent` dan `volume_liters` sudah merupakan hasil kalkulasi presisi backend. Frontend **tidak boleh** melakukan kalkulasi ulang sendiri menggunakan rumus manual.
+  * Hindari me-refresh halaman atau memicu ulang `GET /api/tanks`. Perbarui state lokal secara imutabel berdasarkan kecocokan `tank.id === update.tank_id`.
 
----
-
-### D. Komponen Daftar Peringatan (Alerts Table & Banner)
-Gantikan tabel peringatan mock dengan pemanggilan API dan websocket listener:
-
-1. **Ambil Data Peringatan Awal**:
-   * **Endpoint**: `GET /api/alerts?status=active` (atau tanpa filter untuk riwayat lengkap).
-   ```typescript
-   async function loadAlerts() {
-     const res = await apiFetch<{ success: boolean; data: Alert[] }>("/api/alerts");
-     if (res.success) setAlerts(res.data);
-   }
-   ```
-
-2. **Dengarkan Peringatan Baru dari WebSocket**:
-   Saat server mendeteksi air turun di bawah batas minimum, server mengirim event `ALERT_TRIGGERED`:
-   ```typescript
-   if (payload.type === "ALERT_TRIGGERED" && payload.data) {
-     const newAlert = payload.data;
-     setAlerts((prev) => [newAlert, ...prev]);
-   }
-   ```
-
-3. **Eksekusi Selesaikan Peringatan (Tombol Resolve)**:
-   * **Endpoint**: `PATCH /api/alerts/:id/resolve` (atau `PUT /api/alerts/:id/resolve`).
-   ```typescript
-   async function handleResolveAlert(alertId: number) {
-     try {
-       const res = await apiFetch<{ success: boolean; data: Alert }>(`/api/alerts/${alertId}/resolve`, {
-         method: "PATCH",
-       });
-       if (res.success) {
-         setAlerts((prev) =>
-           prev.map((a) => (a.id === alertId ? { ...a, status: "resolved", resolvedAt: new Date().toISOString() } : a))
-         );
-       }
-     } catch (err: any) {
-       alert(`Gagal menyelesaikan peringatan: ${err.message}`);
-     }
-   }
-   ```
-
----
-
-### E. Komponen Peta Interaktif (Leaflet / Google Maps)
-Jika UI memiliki komponen peta:
-
-* Tangki Gedung Utama: `latitude: "-7.7428450"`, `longitude: "110.3511200"`
-* Tangki Gedung Rawat Inap: `latitude: "-7.7431200"`, `longitude: "110.3515400"`
-
-Gantikan koordinat statis pada pin peta dengan membaca properti `tank.latitude` dan `tank.longitude`:
-```typescript
-tanks.forEach((tank) => {
-  if (tank.latitude && tank.longitude) {
-    const lat = parseFloat(tank.latitude);
-    const lng = parseFloat(tank.longitude);
-    // Tambahkan marker ke peta
-    addMarkerToMap([lat, lng], tank.name, tank.latestReading?.levelPercent);
+#### 2. Event `ALERT_TRIGGERED` (Notifikasi Bahaya Baru):
+* **Trigger**: Muncul seketika saat level air turun melampaui batas minimum.
+* **Format Envelope**:
+  ```json
+  {
+    "type": "ALERT_TRIGGERED",
+    "timestamp": "2026-11-16T08:50:10.000Z",
+    "data": {
+      "id": 95,
+      "tankId": "0d8e0439-184e-4f91-b307-eb3c847d16a1",
+      "level": "CRITICAL",
+      "message": "Level air tangki Tangki Gedung Utama CRITICAL: 18.5% (di bawah 30%)",
+      "status": "active"
+    }
   }
-});
-```
+  ```
+* **Poin Audit Agent**:
+  * Tambahkan alert baru ke daftar alert aktif di frontend.
+  * Update properti `activeAlert` pada tangki yang bersangkutan agar indikator visual kartu tangki berubah warna menjadi merah/kuning.
 
----
-
-### F. Komponen Ekspor Laporan CSV
-Gantikan tombol ekspor mock dengan pemanggilan unduhan file riil:
-
-```typescript
-async function handleExportReadings(tankId: string) {
-  try {
-    const csvData = await apiFetch<string>(`/api/reports/readings/export?tankId=${tankId}`);
-    const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `laporan_tangki_${tankId}_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch (err: any) {
-    alert(`Gagal mengunduh CSV: ${err.message}`);
+#### 3. Event `ALERT_RESOLVED` (Pemulihan Air Normal):
+* **Trigger**: Dipancarkan saat level air naik kembali di atas batas ambang aman.
+* **Format Envelope**:
+  ```json
+  {
+    "type": "ALERT_RESOLVED",
+    "timestamp": "2026-11-16T08:55:00.000Z",
+    "data": {
+      "id": 95,
+      "tankId": "0d8e0439-184e-4f91-b307-eb3c847d16a1",
+      "resolvedAt": "2026-11-16T08:55:00.000Z"
+    }
   }
-}
-```
+  ```
+* **Poin Audit Agent**:
+  * Frontend wajib menghapus alert dari daftar alert aktif atau menandainya sebagai `resolved`.
+  * Hapus `activeAlert` (set ke `null`) pada kartu tangki terkait agar status visual kembali normal.
+
+### B. Manajemen Siklus Hidup Socket (Connection Management)
+* **Pencegahan Multiple Connection**: Pastikan koneksi WebSocket dikelola sebagai singleton atau dibersihkan dengan benar saat komponen di-unmount. Pembukaan instance socket ganda akan membebani server dan menyebabkan memory leak di browser.
+* **Strategi Auto-Reconnect**:
+  * Handler `onclose` harus menerapkan mekanisme reconnect dengan jeda waktu minimal 3 sampai 5 detik.
+  * Hindari reconnect loop instan (0 detik) yang dapat memicu rate-limit atau memblokir browser thread.
 
 ---
 
-## 5. Checklist Verifikasi Akhir bagi Agen Pengembang
+## 6. Protokol Audit Endpoint REST API
 
-Sebelum menyelesaikan implementasi penggantian data mock, pastikan hal-hal berikut:
+Agent harus memverifikasi bahwa frontend memanggil endpoint yang tepat dengan query parameter yang valid:
 
-1. [ ] **Tidak Ada Data Statis Hardcoded**: Hapus seluruh objek dummy (`MOCK_DATA`, `dummyTanks`, data acak).
-2. [ ] **Token Header Otomatis**: Pastikan header `Authorization: Bearer <token>` disertakan pada seluruh panggilan selain `/api/auth/login`.
-3. [ ] **Realtime Socket Berjalan**: Pastikan persentase bar ketinggian air di UI bergerak saat payload `LEVEL_UPDATE` diterima dari socket.
-4. [ ] **Auto-reconnect WebSocket Aktif**: Uji dengan mematikan koneksi sesaat; pastikan klien secara otomatis mencoba terhubung kembali setiap 3 detik.
-5. [ ] **Normalisasi Nilai Visual**: Batasi lebar bar level antara 0% sampai 100% menggunakan `Math.min(100, Math.max(0, level))` agar antarmuka tidak rusak saat data berada di batas ekstrem.
-6. [ ] **Bebas Karakter Emdash dan Emoji**: Kode dan tampilan antarmuka tidak boleh menggunakan emoji atau karakter emdash.
+### 1. Daftar Seluruh Tangki
+* **Metode & Path**: `GET /api/tanks`
+* **Response**: `{ "success": true, "data": Tank[] }`
+* **Kebutuhan UI**: Digunakan untuk initial state dashboard dan monitoring overview.
+* **Poin Audit**: Periksa penanganan nilai `null` pada `latestReading` dan `activeAlert` untuk mencegah error runtime `Cannot read property of null`.
+
+### 2. Detail Spesifik Tangki
+* **Metode & Path**: `GET /api/tanks/:id`
+* **Response**: `{ "success": true, "data": TankDetail }`
+* **Kebutuhan UI**: Halaman konfigurasi tangki, modal detail, atau data sensor node yang terpasang (`sensorNodes`).
+
+### 3. Riwayat Pembacaan Sensor (Grafik Time-Series)
+* **Metode & Path**: `GET /api/tanks/:id/readings`
+* **Query Parameters yang Didukung**:
+  * `hours`: Rentang waktu ke belakang dalam satuan jam (contoh: `hours=24` untuk 24 jam terakhir). Default 24, maksimal 168 (7 hari).
+  * `limit`: Jumlah maksimal data point yang diambil (default 100, maksimal 500).
+* **Response**: `{ "success": true, "data": WaterLevelReading[] }`
+* **Poin Audit Kritis**:
+  * Data dari backend diurutkan secara **Descending (`DESC`)** berdasarkan waktu (titik terbaru berada di indeks 0).
+  * Komponen grafik (Chart.js, Recharts, ApexCharts) umumnya mewajibkan data terurut secara **Ascending (`ASC`)** dari kiri ke kanan. Frontend wajib membalik urutan data (misal via `.reverse()` atau `.sort()`) sebelum diserahkan ke komponen grafik.
+
+### 4. Manajemen & Riwayat Peringatan (Alerts)
+* **Daftar Peringatan**: `GET /api/alerts?status=active` (atau tanpa filter untuk seluruh riwayat).
+* **Selesaikan Peringatan Manual**: `PATCH /api/alerts/:id/resolve` (atau `PUT /api/alerts/:id/resolve`).
+* **Poin Audit**:
+  * Saat tombol "Resolve" ditekan oleh operator, kirim request ke endpoint resolve dan perbarui status di state frontend tanpa harus me-reload halaman.
+
+### 5. Ekspor Data Laporan (CSV Export)
+* **Metode & Path**: `GET /api/reports/readings/export?tankId=<uuid>`
+* **Format Response**: `text/csv; charset=utf-8` (Bukan JSON!).
+* **Poin Audit**:
+  * Frontend tidak boleh mem-parse response ini menggunakan `.json()`.
+  * Response harus dibaca sebagai text atau Blob, lalu dialirkan ke anchor tag HTML untuk memicu dialog download berkas di browser klien.
+
+---
+
+## 7. Panduan Diagnostik & Solusi Masalah Umum (Troubleshooting Matrix)
+
+Gunakan tabel gejala berikut untuk mengidentifikasi bug pada kode frontend:
+
+| Gejala Bug di Antarmuka Frontend | Akar Masalah (Root Cause) | Solusi Audit & Perbaikan bagi Agent |
+|---|---|---|
+| Level air atau volume menampilkan `NaN%` atau `NaN L`. | Nilai `levelPercent` atau `capacityLiters` adalah string desimal dari database, lalu dioperasikan langsung dengan operator matematika. | Bungkus nilai properti menggunakan `parseFloat(val)` atau `Number(val)` sebelum perhitungan visual. |
+| Koneksi WebSocket langsung tertutup dengan Close Code `1008`. | Frontend tidak menyertakan query parameter `?token=<jwt>` pada URL inisialisasi WebSocket. | Tambahkan token aktif ke URL: `${WS_URL}?token=${encodeURIComponent(token)}`. |
+| Kartu tangki tidak bereaksi saat air bertambah/berkurang, padahal koneksi socket open. | Mismatch properti: Komponen mencari `data.tankId` (camelCase), sedangkan event socket mengirim `data.tank_id` (snake_case). | Petakan `data.tank_id` ke properti state yang sesuai, atau update state tangki dengan `tank.id === data.tank_id`. |
+| Grafik time-series berjalan mundur (waktu terbaru di sebelah kiri). | Data dari API terurut secara `DESC` (terbaru dulu), sedangkan library chart membaca array dari kiri ke kanan secara kronologis. | Balik urutan array data (`[...res.data].reverse()`) sebelum memetakan sumbu X dan Y grafik. |
+| Banner peringatan bahaya tidak hilang meskipun level air sudah kembali normal. | Frontend hanya mendengarkan event `ALERT_TRIGGERED`, namun mengabaikan event `ALERT_RESOLVED`. | Tambahkan handler untuk event `ALERT_RESOLVED` pada listener socket yang mengatur `activeAlert` menjadi `null`. |
+| Pin tangki tidak muncul di komponen peta interaktif. | Nilai `latitude` atau `longitude` bernilai string atau `null`. | Lakukan validasi `if (tank.latitude && tank.longitude)` dan parse ke float: `[parseFloat(tank.latitude), parseFloat(tank.longitude)]`. |
+| Browser melempar error `Mixed Content: This request has been blocked`. | Aplikasi di-host di domain HTTPS (misal Tailscale Funnel), tetapi variabel lingkungan mengarah ke `http://` atau `ws://`. | Ubah variabel lingkungan menjadi `https://` untuk REST dan `wss://` untuk WebSocket. |
+| Error HTTP 429 Too Many Requests muncul secara berkala. | Frontend melakukan polling REST API berulang dalam interval sangat cepat, melebihi kuota rate limit backend. | Hentikan polling agresif; gunakan WebSocket untuk pembaruan realtime dan batasi polling hanya untuk data non-realtime. |
+
+---
+
+## 8. Template Rencana Perbaikan (Remediation Plan Output)
+
+Ketika Agent selesai mengaudit kode frontend dan menemukan masalah, susun laporan dan rencana perbaikan untuk pengembang dengan format berikut:
+
+```markdown
+### 1. Ringkasan Hasil Audit
+* Status Integrasi: [Tersambung / Parsial / Bermasalah]
+* Jumlah Masalah Ditemukan: [Jumlah]
+
+### 2. Rincian Temuan & Akar Masalah
+* **Temuan 1**: [Deskripsi masalah]
+  * **Lokasi Berkas**: `[Path berkas frontend]`
+  * **Akar Masalah**: [Penjelasan ketidaksesuaian kontrak/tipe data]
+  * **Dampak**: [Misal: gauge air menampilkan NaN, socket terputus]
+
+### 3. Langkah Rencana Perbaikan (Step-by-Step Remediation Plan)
+* [ ] **Langkah 1**: Perbaiki [komponen/interceptor/hook] pada berkas X.
+* [ ] **Langkah 2**: Selaraskan tipe data dan pemetaan properti sesuai tabel kontrak.
+* [ ] **Langkah 3**: Tambahkan penanganan event socket yang hilang.
+
+### 4. Kriteria Verifikasi Sukses
+* Ketinggian air terisi nilai numerik valid tanpa NaN.
+* Status koneksi WebSocket stabil tanpa penolakan kode 1008.
+* Pembaruan level dan peringatan bahaya tersinkronisasi realtime tanpa refresh halaman.
+```

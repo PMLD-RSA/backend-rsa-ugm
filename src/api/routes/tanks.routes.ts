@@ -133,6 +133,8 @@ export async function tanksRoutes(fastify: FastifyInstance) {
       capacityLiters,
       minThresholdPercent,
       maxThresholdPercent,
+      minDistanceCm,
+      maxDistanceCm,
     } = parseResult.data;
 
     const [newTank] = await db
@@ -145,6 +147,8 @@ export async function tanksRoutes(fastify: FastifyInstance) {
         capacityLiters: capacityLiters.toString(),
         minThresholdPercent: minThresholdPercent.toString(),
         maxThresholdPercent: maxThresholdPercent.toString(),
+        minDistanceCm: minDistanceCm !== undefined ? minDistanceCm.toString() : "30.00",
+        maxDistanceCm: maxDistanceCm !== undefined ? maxDistanceCm.toString() : "350.00",
       })
       .returning();
 
@@ -194,6 +198,10 @@ export async function tanksRoutes(fastify: FastifyInstance) {
       updateData.minThresholdPercent = parseResult.data.minThresholdPercent.toString();
     if (parseResult.data.maxThresholdPercent !== undefined)
       updateData.maxThresholdPercent = parseResult.data.maxThresholdPercent.toString();
+    if (parseResult.data.minDistanceCm !== undefined)
+      updateData.minDistanceCm = parseResult.data.minDistanceCm.toString();
+    if (parseResult.data.maxDistanceCm !== undefined)
+      updateData.maxDistanceCm = parseResult.data.maxDistanceCm.toString();
 
     const [updated] = await db
       .update(tanks)

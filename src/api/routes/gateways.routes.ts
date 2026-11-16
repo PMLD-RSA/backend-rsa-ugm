@@ -106,6 +106,8 @@ export async function gatewaysRoutes(fastify: FastifyInstance) {
           tankId: sensorNodes.tankId,
           tankName: tanks.name,
           capacityLiters: tanks.capacityLiters,
+          minDistanceCm: tanks.minDistanceCm,
+          maxDistanceCm: tanks.maxDistanceCm,
         })
         .from(sensorNodes)
         .innerJoin(tanks, eq(sensorNodes.tankId, tanks.id))

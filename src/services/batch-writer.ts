@@ -62,9 +62,14 @@ export class BatchWriterService {
         recordsToInsert.push({
           tankId,
           sensorNodeId: nodeId,
-          levelPercent: payload.level_percent.toString(),
-          volumeLiters: payload.volume_liters.toString(),
-          rawValue: payload.raw_value ? payload.raw_value.toString() : null,
+          levelPercent: (payload.level_percent ?? 0).toString(),
+          volumeLiters: (payload.volume_liters ?? 0).toString(),
+          rawValue:
+            payload.distance_cm !== undefined
+              ? payload.distance_cm.toString()
+              : payload.raw_value
+                ? payload.raw_value.toString()
+                : null,
           rssi: payload.rssi ?? null,
           recordedAt: payload.timestamp ? new Date(payload.timestamp) : new Date(),
         });

@@ -7,6 +7,8 @@ export const tanks = pgTable("tanks", {
   capacityLiters: numeric("capacity_liters", { precision: 10, scale: 2 }).notNull(),
   minThresholdPercent: numeric("min_threshold_percent", { precision: 5, scale: 2 }).notNull().default("30.00"),
   maxThresholdPercent: numeric("max_threshold_percent", { precision: 5, scale: 2 }).notNull().default("90.00"),
+  minDistanceCm: numeric("min_distance_cm", { precision: 6, scale: 2 }).notNull().default("30.00"),
+  maxDistanceCm: numeric("max_distance_cm", { precision: 6, scale: 2 }).notNull().default("350.00"),
   latitude: numeric("latitude", { precision: 10, scale: 7 }),
   longitude: numeric("longitude", { precision: 10, scale: 7 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

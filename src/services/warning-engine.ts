@@ -11,10 +11,17 @@ function isUUID(str: string): boolean {
 export class WarningEngine {
   // Evaluasi level air terhadap threshold tangki
   public static async evaluateLevel(payload: MqttLevelPayload): Promise<void> {
-    const { tank_id, level_percent } = payload;
+    const { tank_id, level_percent, is_buffered, timestamp } = payload;
 
-    if (!tank_id || !isUUID(tank_id)) {
+    if (!tank_id || !isUUID(tank_id) || level_percent === undefined) {
       return;
+    }
+
+    if (is_buffered && timestamp) {
+      const ageMs = Date.now() - new Date(timestamp).getTime();
+      if (ageMs > 5 * 60 * 1000) {
+        return;
+      }
     }
 
     try {

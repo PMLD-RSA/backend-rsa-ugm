@@ -8,6 +8,8 @@ export const createTankSchema = z.object({
   capacityLiters: z.number().positive(),
   minThresholdPercent: z.number().min(0).max(100).default(30),
   maxThresholdPercent: z.number().min(0).max(100).default(90),
+  minDistanceCm: z.number().nonnegative().default(30),
+  maxDistanceCm: z.number().positive().default(350),
 });
 
 export const updateTankSchema = createTankSchema.partial();

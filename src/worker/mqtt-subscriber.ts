@@ -9,6 +9,7 @@ import {
 import { RedisStreamService } from "../services/redis-stream.js";
 import { WarningEngine } from "../services/warning-engine.js";
 import { wsBroadcaster } from "../services/ws-broadcaster.js";
+import { TankCalculatorService } from "../services/tank-calculator.js";
 import { db } from "../db/index.js";
 import { sensorNodes, gateways } from "../db/schema/index.js";
 
@@ -18,6 +19,7 @@ function isUUID(str: string): boolean {
 
 export class MqttSubscriberService {
   private client: MqttClient | null = null;
+  private lastSequences = new Map<string, { seq: number; time: number }>();
 
   public start(): void {
     console.log(`[MQTT] Menghubungkan ke broker di ${env.MQTT_BROKER_URL}...`);
@@ -98,29 +100,41 @@ export class MqttSubscriberService {
     }
 
     const payload = parseResult.data;
-    const isNodeUuid = isUUID(payload.sensor_node_id);
 
-    // Auto-resolution: jika Raspberry Pi belum mengirim tank_id valid, cari relasinya di tabel sensor_nodes
-    if (!payload.tank_id || !isUUID(payload.tank_id)) {
-      const [node] = await db
-        .select({ tankId: sensorNodes.tankId, id: sensorNodes.id })
-        .from(sensorNodes)
-        .where(
-          isNodeUuid
-            ? or(eq(sensorNodes.id, payload.sensor_node_id), eq(sensorNodes.deviceCode, payload.sensor_node_id))
-            : eq(sensorNodes.deviceCode, payload.sensor_node_id)
-        )
-        .limit(1);
-
-      if (node && node.tankId) {
-        payload.tank_id = node.tankId;
-        payload.sensor_node_id = node.id;
-      } else {
-        console.warn(
-          `[MQTT] Mengabaikan payload level: tidak dapat menemukan relasi tangki untuk node '${payload.sensor_node_id}'`
-        );
+    // Filter duplikasi paket LoRa mesh berdasarkan sequence
+    if (payload.sequence !== undefined) {
+      const prev = this.lastSequences.get(payload.sensor_node_id);
+      if (prev && prev.seq === payload.sequence && Date.now() - prev.time < 5000) {
         return;
       }
+      this.lastSequences.set(payload.sensor_node_id, {
+        seq: payload.sequence,
+        time: Date.now(),
+      });
+    }
+
+    // Resolusi metadata & kalibrasi tangki berdasarkan sensor_node_id atau deviceCode
+    const tankConfig = await TankCalculatorService.getTankConfigForNode(payload.sensor_node_id);
+    if (!tankConfig) {
+      console.warn(
+        `[MQTT] Mengabaikan payload level: relasi tangki tidak ditemukan untuk node '${payload.sensor_node_id}'`
+      );
+      return;
+    }
+
+    payload.tank_id = tankConfig.tankId;
+    payload.sensor_node_id = tankConfig.sensorNodeId;
+
+    // Kalkulasi persentase dan volume air di sisi backend
+    const metrics = TankCalculatorService.calculate(payload.distance_cm, tankConfig);
+    payload.level_percent = metrics.levelPercent;
+    payload.volume_liters = metrics.volumeLiters;
+    payload.raw_value = payload.distance_cm;
+
+    if (metrics.isOutOfRange) {
+      console.warn(
+        `[MQTT] Bacaan jarak (${payload.distance_cm} cm) di luar rentang kalibrasi tangki ${tankConfig.tankName} [${tankConfig.minDistanceCm} - ${tankConfig.maxDistanceCm} cm]`
+      );
     }
 
     // Buffer ke Redis, evaluasi alert, dan kirim ke websocket

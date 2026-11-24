@@ -1,7 +1,7 @@
 import { WebSocket } from "ws";
 
 export interface BroadcastMessage {
-  type: "LEVEL_UPDATE" | "ALERT_TRIGGERED" | "ALERT_RESOLVED" | "NODE_STATUS";
+  type: "LEVEL_UPDATE" | "ALERT_TRIGGERED" | "ALERT_RESOLVED" | "NODE_STATUS" | "GATEWAY_STATUS";
   data: unknown;
   timestamp: string;
 }

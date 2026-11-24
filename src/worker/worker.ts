@@ -1,9 +1,10 @@
 import { mqttSubscriber } from "./mqtt-subscriber.js";
 import { BatchWriterService } from "../services/batch-writer.js";
+import { deviceWatchdog } from "../services/device-watchdog.js";
 import { redis } from "../services/redis-stream.js";
 
 export async function startWorker() {
-  console.log("Menjalankan worker (MQTT + Batch Writer)...");
+  console.log("Menjalankan worker (MQTT + Batch Writer + Device Watchdog)...");
 
   // Koneksi Redis
   try {
@@ -15,10 +16,12 @@ export async function startWorker() {
 
   BatchWriterService.start();
   mqttSubscriber.start();
+  deviceWatchdog.start();
 
   // Penanganan shutdown
   const shutdown = () => {
     console.log("Menghentikan worker...");
+    deviceWatchdog.stop();
     mqttSubscriber.stop();
     BatchWriterService.stop();
     redis.disconnect();

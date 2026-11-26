@@ -1,7 +1,10 @@
 # Stack Monitoring Opsional (Prometheus + Grafana) untuk Backend RSA UGM
 # Dirancang ringan dan aman untuk VPS kampus dengan batas RAM ketat dan retensi data 7 hari.
 #
-# Cara menjalankan bersama stack utama:
+# Cara menjalankan terpisah (saat backend berjalan di host/PM2):
+#   docker compose -f docker-compose.monitoring.yml up -d
+#
+# Cara menjalankan bersama stack utama Docker:
 #   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d --build
 #
 # Cara mematikan monitoring saja (tanpa mematikan backend/DB/MQTT):
@@ -24,6 +27,8 @@ services:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     mem_limit: 256m
     cpus: "0.50"
 

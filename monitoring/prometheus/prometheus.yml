@@ -12,10 +12,11 @@ scrape_configs:
       - targets: ["localhost:9090"]
 
   # Memantau Backend Fastify + MQTT Worker + Redis Stream + Batch Writer
+  # Menggunakan host.docker.internal agar kompatibel saat backend berjalan di PM2/host VPS
   - job_name: "rsa_ugm_backend"
     metrics_path: "/metrics"
     static_configs:
-      - targets: ["backend:8000"]
+      - targets: ["host.docker.internal:8000"]
         labels:
           service: "backend-rsa-ugm"
           environment: "campus-vps"

@@ -10,6 +10,7 @@ import { RedisStreamService } from "../services/redis-stream.js";
 import { WarningEngine } from "../services/warning-engine.js";
 import { wsBroadcaster } from "../services/ws-broadcaster.js";
 import { TankCalculatorService } from "../services/tank-calculator.js";
+import { mqttMessagesTotal, sensorOutOfRangeTotal } from "../services/metrics.js";
 import { db } from "../db/index.js";
 import { sensorNodes, gateways } from "../db/schema/index.js";
 
@@ -86,8 +87,11 @@ export class MqttSubscriberService {
         await this.handleStatusMessage(parsedJson);
       } else if (topic.endsWith("/heartbeat")) {
         await this.handleHeartbeatMessage(parsedJson);
+      } else {
+        mqttMessagesTotal.inc({ topic_type: "unknown", status: "ignored" });
       }
     } catch (err) {
+      mqttMessagesTotal.inc({ topic_type: "unknown", status: "parse_error" });
       console.error(`[MQTT] Gagal parse pesan pada topic ${topic}:`, err);
     }
   }
@@ -95,6 +99,7 @@ export class MqttSubscriberService {
   private async handleLevelMessage(data: unknown): Promise<void> {
     const parseResult = mqttLevelPayloadSchema.safeParse(data);
     if (!parseResult.success) {
+      mqttMessagesTotal.inc({ topic_type: "level", status: "invalid_payload" });
       console.warn("[MQTT] Payload level tidak valid:", parseResult.error.format());
       return;
     }
@@ -105,6 +110,7 @@ export class MqttSubscriberService {
     if (payload.sequence !== undefined) {
       const prev = this.lastSequences.get(payload.sensor_node_id);
       if (prev && prev.seq === payload.sequence && Date.now() - prev.time < 5000) {
+        mqttMessagesTotal.inc({ topic_type: "level", status: "duplicate_dropped" });
         return;
       }
       this.lastSequences.set(payload.sensor_node_id, {
@@ -116,6 +122,7 @@ export class MqttSubscriberService {
     // Resolusi metadata & kalibrasi tangki berdasarkan sensor_node_id atau deviceCode
     const tankConfig = await TankCalculatorService.getTankConfigForNode(payload.sensor_node_id);
     if (!tankConfig) {
+      mqttMessagesTotal.inc({ topic_type: "level", status: "unmapped_node" });
       console.warn(
         `[MQTT] Mengabaikan payload level: relasi tangki tidak ditemukan untuk node '${payload.sensor_node_id}'`
       );
@@ -132,6 +139,7 @@ export class MqttSubscriberService {
     payload.raw_value = payload.distance_cm;
 
     if (metrics.isOutOfRange) {
+      sensorOutOfRangeTotal.inc({ tank_name: tankConfig.tankName });
       console.warn(
         `[MQTT] Bacaan jarak (${payload.distance_cm} cm) di luar rentang kalibrasi tangki ${tankConfig.tankName} [${tankConfig.minDistanceCm} - ${tankConfig.maxDistanceCm} cm]`
       );
@@ -141,11 +149,13 @@ export class MqttSubscriberService {
     await RedisStreamService.pushReading(payload);
     await WarningEngine.evaluateLevel(payload);
     wsBroadcaster.broadcast("LEVEL_UPDATE", payload);
+    mqttMessagesTotal.inc({ topic_type: "level", status: "processed" });
   }
 
   private async handleStatusMessage(data: unknown): Promise<void> {
     const parseResult = mqttStatusPayloadSchema.safeParse(data);
     if (!parseResult.success) {
+      mqttMessagesTotal.inc({ topic_type: "status", status: "invalid_payload" });
       console.warn("[MQTT] Payload status tidak valid:", parseResult.error.format());
       return;
     }
@@ -168,10 +178,12 @@ export class MqttSubscriberService {
       .returning();
 
     if (updatedNodes.length > 0) {
+      mqttMessagesTotal.inc({ topic_type: "status", status: "processed" });
       console.log(
         `[MQTT] Status sensor node '${updatedNodes[0].deviceCode}' berhasil di-update: ${payload.status}`
       );
     } else {
+      mqttMessagesTotal.inc({ topic_type: "status", status: "unmapped_node" });
       console.warn(
         `[MQTT] Node sensor tidak ditemukan di database untuk sensor_node_id: '${payload.sensor_node_id}'`
       );
@@ -183,6 +195,7 @@ export class MqttSubscriberService {
   private async handleHeartbeatMessage(data: unknown): Promise<void> {
     const parseResult = mqttHeartbeatPayloadSchema.safeParse(data);
     if (!parseResult.success) {
+      mqttMessagesTotal.inc({ topic_type: "heartbeat", status: "invalid_payload" });
       return;
     }
 
@@ -205,6 +218,7 @@ export class MqttSubscriberService {
         })
         .where(eq(sensorNodes.deviceCode, payload.device_code));
     }
+    mqttMessagesTotal.inc({ topic_type: "heartbeat", status: "processed" });
   }
 }
 

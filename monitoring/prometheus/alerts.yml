@@ -1,0 +1,58 @@
+groups:
+  - name: rsa_ugm_backend_alerts
+    interval: 15s
+    rules:
+      # 1. Service Backend API & Worker mati/tidak merespons scrape Prometheus
+      - alert: BackendServiceDown
+        expr: up{job="rsa_ugm_backend"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: backend-rsa-ugm
+        annotations:
+          summary: "Backend RSA UGM tidak dapat dijangkau (DOWN)"
+          description: "Target Prometheus {{ $labels.instance }} berhenti merespons /metrics selama lebih dari 30 detik. Periksa kontainer water_tank_backend."
+
+      # 2. Terjadi lonjakan error internal server (HTTP 5xx)
+      - alert: HighHttp5xxErrors
+        expr: sum(rate(rsa_http_requests_total{status_code=~"5.."}[1m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: backend-rsa-ugm
+        annotations:
+          summary: "Terdeteksi error HTTP 5xx pada REST API"
+          description: "Endpoint backend menghasilkan respons HTTP 5xx secara berkelanjutan selama 1 menit terakhir."
+
+      # 3. Antrean buffer Redis Stream menumpuk (indikasi penulisan ke TimescaleDB melambat/macet)
+      - alert: RedisQueueBacklogHigh
+        expr: rsa_redis_stream_pending_length > 200
+        for: 2m
+        labels:
+          severity: warning
+          service: iot-pipeline
+        annotations:
+          summary: "Antrean buffer Redis Stream menumpuk (> 200 pesan)"
+          description: "Terdapat {{ $value }} pesan pembacaan sensor yang tertahan di Redis Stream selama > 2 menit. Periksa koneksi atau performa TimescaleDB."
+
+      # 4. Data pembacaan korup / gagal simpan masuk ke Dead Letter Queue
+      - alert: DeadLetterQueueDetected
+        expr: increase(rsa_batch_writer_records_total{status="dead_letter"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: iot-pipeline
+        annotations:
+          summary: "Terdeteksi data gagal simpan masuk ke Dead Letter Queue"
+          description: "BatchWriterService memindahkan data pembacaan yang gagal disimpan ke Dead Letter Queue Redis dalam 5 menit terakhir."
+
+      # 5. Penggunaan RAM Heap Node.js tinggi (indikasi memory leak pada VPS kampus)
+      - alert: HighBackendMemory
+        expr: rsa_backend_nodejs_heap_size_used_bytes > 209715200
+        for: 5m
+        labels:
+          severity: warning
+          service: backend-rsa-ugm
+        annotations:
+          summary: "Penggunaan RAM Heap Node.js melebihi 200 MiB"
+          description: "Memori heap backend mencapai {{ $value | humanize1024 }}B selama lebih dari 5 menit. Waspadai potensi memory leak pada VPS."

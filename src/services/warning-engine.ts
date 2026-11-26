@@ -3,6 +3,7 @@ import { db } from "../db/index.js";
 import { alerts, tanks } from "../db/schema/index.js";
 import { MqttLevelPayload } from "../schemas/mqtt.schema.js";
 import { wsBroadcaster } from "./ws-broadcaster.js";
+import { alertsTriggeredTotal } from "./metrics.js";
 
 function isUUID(str: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -78,6 +79,7 @@ export class WarningEngine {
             })
             .returning();
 
+          alertsTriggeredTotal.inc({ level: alertLevel });
           wsBroadcaster.broadcast("ALERT_TRIGGERED", newAlert);
         }
       } else {

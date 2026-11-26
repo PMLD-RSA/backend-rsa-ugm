@@ -24,8 +24,9 @@ ENV HOST=0.0.0.0
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-# Salin hasil kompilasi dari builder stage
+# Salin hasil kompilasi dari builder stage dan spesifikasi OpenAPI untuk Swagger
 COPY --from=builder /app/dist ./dist
+COPY docs/openapi.yaml ./docs/openapi.yaml
 
 # Buat user non-root untuk keamanan container
 USER node

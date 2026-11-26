@@ -17,6 +17,8 @@ import { alertsRoutes } from "./routes/alerts.routes.js";
 import { gatewaysRoutes } from "./routes/gateways.routes.js";
 import { auditLogsRoutes } from "./routes/audit-logs.routes.js";
 import { reportsRoutes } from "./routes/reports.routes.js";
+import { metricsRoutes } from "./routes/metrics.routes.js";
+import { httpRequestsTotal, httpRequestDurationSeconds } from "../services/metrics.js";
 
 export interface ServerOptions {
   nodeEnv?: "development" | "test" | "production";
@@ -91,8 +93,8 @@ export async function createServer(options?: ServerOptions) {
     max: env.RATE_LIMIT_GLOBAL_MAX,
     timeWindow: "1 minute",
     allowList: (req) => {
-      // Pengecualian rate limit untuk health check dan panggilan sinkronisasi gateway yang valid
-      if (req.url === "/health") return true;
+      // Pengecualian rate limit untuk health check, metrics Prometheus, dan sinkronisasi gateway
+      if (req.url === "/health" || req.url === "/metrics") return true;
       if (req.url.startsWith("/api/gateways/") && req.headers["x-gateway-key"]) return true;
       return false;
     },
@@ -110,8 +112,25 @@ export async function createServer(options?: ServerOptions) {
   await fastify.register(websocketPlugin);
   await fastify.register(swaggerPlugin);
 
+  // 4b. Hook Observability Prometheus (Catat jumlah request & latensi respons HTTP)
+  fastify.addHook("onResponse", (request, reply, done) => {
+    const route = request.routeOptions?.url || request.url.split("?")[0];
+    if (route !== "/metrics") {
+      const durationSeconds = reply.elapsedTime / 1000;
+      const labels = {
+        method: request.method,
+        route,
+        status_code: String(reply.statusCode),
+      };
+      httpRequestsTotal.inc(labels);
+      httpRequestDurationSeconds.observe(labels, durationSeconds);
+    }
+    done();
+  });
+
   // 5. Registrasi Rute API
   await fastify.register(healthRoutes);
+  await fastify.register(metricsRoutes);
   await fastify.register(authRoutes);
   await fastify.register(usersRoutes);
   await fastify.register(tanksRoutes);

@@ -35,6 +35,7 @@ const envSchema = z.object({
   CORS_ALLOWED_ORIGINS: z.string().default(""),
   RATE_LIMIT_GLOBAL_MAX: z.coerce.number().default(120),
   RATE_LIMIT_LOGIN_MAX: z.coerce.number().default(5),
+  METRICS_TOKEN: z.string().optional().default(""),
   ENABLE_SWAGGER: z
     .preprocess((val) => {
       if (typeof val === "string") {

@@ -2,6 +2,11 @@ import { db } from "../db/index.js";
 import { waterLevelReadings, NewWaterLevelReading } from "../db/schema/index.js";
 import { RedisStreamService, redis } from "./redis-stream.js";
 import { env } from "../config/env.js";
+import {
+  batchWriterRecordsTotal,
+  batchWriterDurationSeconds,
+  redisStreamPendingLength,
+} from "./metrics.js";
 
 function isUUID(str: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -33,8 +38,17 @@ export class BatchWriterService {
     if (this.isProcessing) return;
     if (redis.status !== "ready") return;
     this.isProcessing = true;
+    const endTimer = batchWriterDurationSeconds.startTimer();
 
     try {
+      // Pantau panjang antrean Redis Stream sebelum diproses
+      try {
+        const streamLen = await redis.xlen(env.REDIS_STREAM_KEY);
+        redisStreamPendingLength.set(streamLen);
+      } catch {
+        // Abaikan jika gagal membaca panjang stream
+      }
+
       const batch = await RedisStreamService.readBatch(env.BATCH_SIZE);
 
       if (batch.length === 0) {
@@ -55,6 +69,7 @@ export class BatchWriterService {
 
         // Validasi UUID tank
         if (!tankId) {
+          batchWriterRecordsTotal.inc({ status: "invalid_tank_id" });
           console.warn(`[BatchWriter] Mengabaikan payload: tank_id bukan UUID valid (${payload.tank_id})`);
           continue;
         }
@@ -80,6 +95,7 @@ export class BatchWriterService {
         try {
           // Coba insert seluruh batch sekaligus
           await db.insert(waterLevelReadings).values(recordsToInsert);
+          batchWriterRecordsTotal.inc({ status: "inserted" }, recordsToInsert.length);
           console.log(`[BatchWriter] Berhasil menyimpan ${recordsToInsert.length} data ke database`);
         } catch (batchErr: unknown) {
           // Jika batch gagal (misal salah satu tank_id tidak ada di DB / foreign key constraint violation),
@@ -92,6 +108,7 @@ export class BatchWriterService {
             try {
               await db.insert(waterLevelReadings).values(rec);
               savedCount++;
+              batchWriterRecordsTotal.inc({ status: "inserted" });
             } catch (singleErr: unknown) {
               const singleDetail =
                 (singleErr as { detail?: string })?.detail ||
@@ -99,6 +116,7 @@ export class BatchWriterService {
               console.warn(
                 `[BatchWriter] Mengabaikan data tidak valid (tank_id: ${rec.tankId}): ${singleDetail}`
               );
+              batchWriterRecordsTotal.inc({ status: "dead_letter" });
               // Catat data rusak ke antrean Dead Letter di Redis
               await RedisStreamService.pushToDeadLetter(rec, singleDetail);
             }
@@ -114,9 +132,18 @@ export class BatchWriterService {
 
       // Hapus seluruh ID yang sudah diproses dari buffer Redis agar antrean tidak tersumbat
       await RedisStreamService.deleteProcessed(allBatchIds);
+
+      // Perbarui panjang antrean Redis Stream setelah batch selesai dihapus
+      try {
+        const remainingLen = await redis.xlen(env.REDIS_STREAM_KEY);
+        redisStreamPendingLength.set(remainingLen);
+      } catch {
+        // Abaikan jika gagal membaca sisa antrean
+      }
     } catch (error) {
       console.error("[BatchWriter] Gagal memproses batch:", error);
     } finally {
+      endTimer();
       this.isProcessing = false;
     }
   }

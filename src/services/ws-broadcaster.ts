@@ -1,4 +1,5 @@
 import { WebSocket } from "ws";
+import { wsConnectedClients, wsBroadcastMessagesTotal } from "./metrics.js";
 
 export interface BroadcastMessage {
   type: "LEVEL_UPDATE" | "ALERT_TRIGGERED" | "ALERT_RESOLVED" | "NODE_STATUS";
@@ -11,15 +12,19 @@ class WebSocketBroadcaster {
 
   public addClient(ws: WebSocket) {
     this.clients.add(ws);
+    wsConnectedClients.set(this.clients.size);
     ws.on("close", () => this.removeClient(ws));
     ws.on("error", () => this.removeClient(ws));
   }
 
   public removeClient(ws: WebSocket) {
     this.clients.delete(ws);
+    wsConnectedClients.set(this.clients.size);
   }
 
   public broadcast(type: BroadcastMessage["type"], data: unknown) {
+    wsBroadcastMessagesTotal.inc({ event_type: type });
+
     const payload: BroadcastMessage = {
       type,
       data,

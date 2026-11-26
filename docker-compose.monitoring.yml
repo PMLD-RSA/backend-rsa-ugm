@@ -32,7 +32,7 @@ services:
     container_name: water_tank_grafana
     restart: unless-stopped
     ports:
-      - "${GRAFANA_BIND_HOST:-0.0.0.0}:3000:3000"
+      - "${GRAFANA_BIND_HOST:-0.0.0.0}:${GRAFANA_PORT:-9000}:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin123}

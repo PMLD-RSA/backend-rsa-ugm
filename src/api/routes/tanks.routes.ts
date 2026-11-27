@@ -1,8 +1,43 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { eq, desc, and, gte } from "drizzle-orm";
+import { z } from "zod";
 import { db } from "../../db/index.js";
-import { tanks, waterLevelReadings, alerts, sensorNodes, auditLogs } from "../../db/schema/index.js";
-import { createTankSchema, updateTankSchema } from "../../schemas/api.schema.js";
+import {
+  tanks,
+  waterLevelReadings,
+  alerts,
+  sensorNodes,
+  gateways,
+  auditLogs,
+} from "../../db/schema/index.js";
+import {
+  createTankSchema,
+  createTankWithSensorSchema,
+  updateTankSchema,
+} from "../../schemas/api.schema.js";
+
+class HttpRouteError extends Error {
+  constructor(
+    public readonly statusCode: number,
+    message: string
+  ) {
+    super(message);
+  }
+}
+
+function buildTankInsertValues(data: z.infer<typeof createTankSchema>) {
+  return {
+    name: data.name,
+    location: data.location ?? null,
+    latitude: data.latitude !== undefined && data.latitude !== null ? data.latitude.toString() : null,
+    longitude: data.longitude !== undefined && data.longitude !== null ? data.longitude.toString() : null,
+    capacityLiters: data.capacityLiters.toString(),
+    minThresholdPercent: data.minThresholdPercent.toString(),
+    maxThresholdPercent: data.maxThresholdPercent.toString(),
+    minDistanceCm: data.minDistanceCm.toString(),
+    maxDistanceCm: data.maxDistanceCm.toString(),
+  };
+}
 
 export async function tanksRoutes(fastify: FastifyInstance) {
   const authGuard = { preHandler: [fastify.authenticate] };
@@ -125,31 +160,9 @@ export async function tanksRoutes(fastify: FastifyInstance) {
       });
     }
 
-    const {
-      name,
-      location,
-      latitude,
-      longitude,
-      capacityLiters,
-      minThresholdPercent,
-      maxThresholdPercent,
-      minDistanceCm,
-      maxDistanceCm,
-    } = parseResult.data;
-
     const [newTank] = await db
       .insert(tanks)
-      .values({
-        name,
-        location: location ?? null,
-        latitude: latitude !== undefined && latitude !== null ? latitude.toString() : null,
-        longitude: longitude !== undefined && longitude !== null ? longitude.toString() : null,
-        capacityLiters: capacityLiters.toString(),
-        minThresholdPercent: minThresholdPercent.toString(),
-        maxThresholdPercent: maxThresholdPercent.toString(),
-        minDistanceCm: minDistanceCm !== undefined ? minDistanceCm.toString() : "30.00",
-        maxDistanceCm: maxDistanceCm !== undefined ? maxDistanceCm.toString() : "350.00",
-      })
+      .values(buildTankInsertValues(parseResult.data))
       .returning();
 
     // Catat log audit
@@ -164,6 +177,112 @@ export async function tanksRoutes(fastify: FastifyInstance) {
     });
 
     return reply.status(201).send({ success: true, data: newTank });
+  });
+
+  // Tambah tangki baru beserta sensor node awal dalam satu transaksi (Khusus Admin)
+  fastify.post("/api/tanks/with-sensor", adminGuard, async (request, reply) => {
+    const parseResult = createTankWithSensorSchema.safeParse(request.body);
+
+    if (!parseResult.success) {
+      return reply.status(400).send({
+        success: false,
+        message: "Validation failed",
+        errors: parseResult.error.format(),
+      });
+    }
+
+    const { sensorNode, ...tankInput } = parseResult.data;
+    const adminUser = request.user as { id: string };
+
+    try {
+      const { newTank, newSensor } = await db.transaction(async (tx) => {
+        // 1. Pastikan gateway terdaftar
+        const [gateway] = await tx
+          .select({ id: gateways.id })
+          .from(gateways)
+          .where(eq(gateways.id, sensorNode.gatewayId))
+          .limit(1);
+
+        if (!gateway) {
+          throw new HttpRouteError(404, "Gateway not found");
+        }
+
+        // 2. Pastikan deviceCode sensor belum digunakan
+        const [existingNode] = await tx
+          .select({ id: sensorNodes.id })
+          .from(sensorNodes)
+          .where(eq(sensorNodes.deviceCode, sensorNode.deviceCode))
+          .limit(1);
+
+        if (existingNode) {
+          throw new HttpRouteError(
+            409,
+            `Kode sensor '${sensorNode.deviceCode}' sudah digunakan`
+          );
+        }
+
+        // 3. Simpan tangki baru
+        const [createdTank] = await tx
+          .insert(tanks)
+          .values(buildTankInsertValues(tankInput))
+          .returning();
+
+        // 4. Simpan sensor baru dengan status offline dan lastSeen kosong
+        const [createdSensor] = await tx
+          .insert(sensorNodes)
+          .values({
+            tankId: createdTank.id,
+            gatewayId: gateway.id,
+            deviceCode: sensorNode.deviceCode,
+            sensorType: sensorNode.sensorType,
+            status: "offline",
+            lastSeen: null,
+          })
+          .returning();
+
+        // 5. Catat audit log dalam transaksi yang sama
+        await tx.insert(auditLogs).values({
+          userId: adminUser.id,
+          action: "CREATE_TANK_WITH_SENSOR",
+          entity: "tanks",
+          entityId: createdTank.id,
+          detail: `Menambahkan master tangki '${createdTank.name}' beserta sensor '${createdSensor.deviceCode}'`,
+          ipAddress: request.ip,
+        });
+
+        return { newTank: createdTank, newSensor: createdSensor };
+      });
+
+      return reply.status(201).send({
+        success: true,
+        data: {
+          ...newTank,
+          nodes: [newSensor],
+          latestReading: null,
+          activeAlert: null,
+        },
+      });
+    } catch (err: unknown) {
+      if (err instanceof HttpRouteError) {
+        return reply.status(err.statusCode).send({
+          success: false,
+          message: err.message,
+        });
+      }
+
+      const pgCode =
+        (err as { code?: string; cause?: { code?: string } })?.code ??
+        (err as { cause?: { code?: string } })?.cause?.code;
+
+      if (pgCode === "23505") {
+        return reply.status(409).send({
+          success: false,
+          message: `Kode sensor '${sensorNode.deviceCode}' sudah digunakan`,
+        });
+      }
+
+      throw err;
+    }
   });
 
   // Handler update tangki (Mendukung PATCH dan PUT)
